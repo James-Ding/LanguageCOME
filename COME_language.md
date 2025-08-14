@@ -2,22 +2,22 @@
 
 | Facility | **COME** | **C** | **Go** |
 |---|---|---|---|
-| **Entry Point** | `int main(void)` or `int main(int argc, char **argv)` | `int main(void)` or `int main(int argc, char **argv)` | `func main()` in `package main` |
-| **Modules / Packages** | None — split into `.h` and `.c` with manual linking | None — split into `.h` and `.c` with manual linking | `package` keyword, imports with `import` |
-| **Header Files** | Required for declarations (`.h`) | Required for declarations (`.h`) | No — single package import handles declarations |
-| **Comments** | `//` and `/* ... */` | `//` and `/* ... */` | Same as C |
-| **Semicolons** | Required after each statement | Required after each statement | Optional at line end (inserted automatically) |
+| **Entry Point** | `int main(void)` or `int main(string args[])` | `int main(void)` or `int main(int argc, char **argv)` | `func main()` in `package main` |
+| **Modules / Packages** | `package` keyword, imports with `import` | None — split into `.h` and `.c` with manual linking | `package` keyword, imports with `import` |
+| **Header Files** | No — single package import handles declarations | Required for declarations (`.h`) | No — single package import handles declarations |
+| **Comments** | `//` and `/* ... */` | `//` and `/* ... */` | `//` and `/* ... */` |
+| **Semicolons** | Optional at line end | Required after each statement | Optional at line end (inserted automatically) |
 | **Case Sensitivity** | Yes | Yes | Yes |
 
 ## 2. Data Types
 
 | Facility | **COME** | **C** | **Go** |
 |---|---|---|---|
-| **Primitive Types** | `char`, `int`, `short`, `long`, `float`, `double` | `char`, `int`, `short`, `long`, `float`, `double` | `bool`, `string`, `int`, `int8..int64`, `uint`, `uint8..uint64`, `float32`, `float64`, `complex64`, `complex128`, `byte`, `rune` |
-| **Strings** | Null-terminated char arrays | Null-terminated char arrays | Immutable UTF-8 strings |
-| **Booleans** | No dedicated type (use `_Bool` in C99) | No dedicated type (use `_Bool` in C99) | Built-in `bool` |
+| **Primitive Types** | `boolean`, `char`, `int`, `short`, `long`, `float`, `double` | `char`, `int`, `short`, `long`, `float`, `double` | `bool`, `string`, `int`, `int8..int64`, `uint`, `uint8..uint64`, `float32`, `float64`, `complex64`, `complex128`, `byte`, `rune` |
+| **Strings** | Immutable UTF-16 strings | Null-terminated char arrays | Immutable UTF-8 strings |
+| **Booleans** | Built-in `boolean` | No dedicated type (use `_Bool` in C99) | Built-in `bool` |
 | **Void** | `void` for no value or generic pointer | `void` for no value or generic pointer | No direct equivalent |
-| **Structs** | Yes | Yes | Yes, with methods |
+| **Structs** | Yes, with methods | Yes | Yes, with methods |
 | **Arrays** | Fixed-size only | Fixed-size only | Fixed-size and slices |
 | **Pointers** | Full pointer arithmetic | Full pointer arithmetic | Pointers allowed but no arithmetic |
 | **Enums** | Yes (`enum`) | Yes (`enum`) | No native enums |
