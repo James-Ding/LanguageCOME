@@ -13,7 +13,7 @@
 
 | Facility | **COME** | **C** | **Go** |
 |---|---|---|---|
-| **Primitive Types** | `boolean`, `char`, `int`, `short`, `long`, `float`, `double` | `char`, `int`, `short`, `long`, `float`, `double` | `bool`, `string`, `int`, `int8..int64`, `uint`, `uint8..uint64`, `float32`, `float64`, `complex64`, `complex128`, `byte`, `rune` |
+| **Primitive Types** | `boolean`, `string`, `char`, `int`, `short`, `long`, `float`, `double` | `char`, `int`, `short`, `long`, `float`, `double` | `bool`, `string`, `int`, `int8..int64`, `uint`, `uint8..uint64`, `float32`, `float64`, `complex64`, `complex128`, `byte`, `rune` |
 | **Strings** | Immutable UTF-16 strings | Null-terminated char arrays | Immutable UTF-8 strings |
 | **Booleans** | Built-in `boolean` | No dedicated type (use `_Bool` in C99) | Built-in `bool` |
 | **Void** | `void` for no value or generic pointer | `void` for no value or generic pointer | No direct equivalent |
