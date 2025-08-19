@@ -1,0 +1,17 @@
+program      = { statement } ;
+statement    = import_stmt | function_def ;
+import_stmt  = "import" identifier ;
+function_def = type "main" "(" [param_list] ")" "{" { stmt_body } "}" ;
+param_list   = param { "," param } ;
+param        = type identifier ;
+stmt_body    = printf_stmt | if_stmt | return_stmt ;
+printf_stmt  = "std.printf" "(" string_literal [ "," identifier ] ")" ;
+if_stmt      = "if" "(" expression ")" "{" { stmt_body } "}" [ "else" "{" { stmt_body } "}" ] ;
+return_stmt  = "return" expression ;
+expression   = identifier | number | function_call ;
+function_call= identifier "(" [ param_list ] ")" ;
+type         = "int" | "string" ;
+identifier   = letter { letter | digit | "_" } ;
+number       = digit { digit } ;
+string_literal = '"' { any_char_except_quote } '"' ;
+

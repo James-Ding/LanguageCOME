@@ -1,0 +1,7 @@
+import std
+
+main()
+{
+    std.printf("Hello world!\n")
+}
+
