@@ -1,0 +1,3 @@
+[submodule "external/llhttp"]
+	path = external/llhttp
+	url = https://github.com/nodejs/llhttp
