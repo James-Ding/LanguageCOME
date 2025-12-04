@@ -1,6 +1,6 @@
 TOP_DIR=../
 # Subdirectories to build if they have Makefiles
-SUB_DIRS := modules
+SUB_DIRS := core mem net
 
 include $(TOP_DIR)/Makefile.inc
 
@@ -8,7 +8,8 @@ include $(TOP_DIR)/Makefile.inc
 TARGET := $(BUILD_DIR)/come
 
 # Link all objects into final binary
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
+# Link all objects into final binary
+$(TARGET): $(SUB_MAKE_DIRS)
+	$(CC) $(CFLAGS) -o $@ $(wildcard $(BUILD_DIR)/*.o)
 
 all: $(SUB_MAKE_DIRS) $(TARGET)

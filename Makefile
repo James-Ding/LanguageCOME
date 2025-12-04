@@ -1,6 +1,6 @@
 # Root Makefile: build tests and examples using compiler built in src/
 
-CFLAGS=-Wall -g -Isrc/include/
+CFLAGS=-Wall -g -Isrc/include/ -Isrc/core/include/
 
 # Directories
 SRC_DIR = src
@@ -14,8 +14,8 @@ EXAMPLE_CO = $(wildcard $(EXAMPLES_DIR)/*.co)
 EXAMPLE_BIN = $(patsubst $(EXAMPLES_DIR)/%.co,$(EXAMPLES_DIR)/%,$(EXAMPLE_CO))
 
 # Test sources (optional C tests)
-TEST_SRC = $(wildcard $(TESTS_DIR)/*.c)
-TEST_BIN = $(patsubst $(TESTS_DIR)/%.c,$(BUILD_DIR)/tests/%,$(TEST_SRC))
+# TEST_SRC = $(wildcard $(TESTS_DIR)/*.c)
+# TEST_BIN = $(patsubst $(TESTS_DIR)/%.c,$(BUILD_DIR)/tests/%,$(TEST_SRC))
 
 # Default: build compiler then examples
 all: $(TARGET) examples
@@ -40,16 +40,21 @@ run-examples: examples
 
 # Run tests
 ## Build all test binaries (C tests in tests/)
-tests: $(TEST_BIN)
+tests: 
+	@echo "Building tests via script..."
 
-$(BUILD_DIR)/tests/%: $(TESTS_DIR)/%.c
-	@mkdir -p $(BUILD_DIR)/tests
-	$(CC) $(CFLAGS) $< -o $@
+# $(BUILD_DIR)/tests/%: $(TESTS_DIR)/%.c
+# 	@mkdir -p $(BUILD_DIR)/tests
+# 	$(CC) $(CFLAGS) $< -o $@
 
-test: tests
-	@echo "Running tests..."
+test: tests test-e2e
+	@echo "Running unit tests..."
 	@chmod +x $(TESTS_DIR)/run_tests.sh
 	@$(TESTS_DIR)/run_tests.sh
+
+test-e2e: $(TARGET)
+	@echo "Running end-to-end tests..."
+	@python3 $(TESTS_DIR)/test_runner.py
 
 # Clean build artifacts
 clean:

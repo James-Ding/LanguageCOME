@@ -1,6 +1,6 @@
 
 CC=gcc
-CFLAGS += -Wall -g -I$(TOP_DIR)src/include/
+CFLAGS += -Wall -g -I$(TOP_DIR)src/include/ -I$(TOP_DIR)src/core/include/
 
 # Source and build dirs
 SRC_DIR := .
