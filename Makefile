@@ -7,31 +7,29 @@ SRC_DIR = src
 BUILD_DIR = build
 EXAMPLES_DIR = examples
 TESTS_DIR = tests
-COMPILER = $(BUILD_DIR)/come
+TARGET = $(BUILD_DIR)/come
 
 # Example sources
 EXAMPLE_CO = $(wildcard $(EXAMPLES_DIR)/*.co)
-EXAMPLE_BIN = $(patsubst $(EXAMPLES_DIR)/%.co,$(BUILD_DIR)/examples/%,$(EXAMPLE_CO))
+EXAMPLE_BIN = $(patsubst $(EXAMPLES_DIR)/%.co,$(EXAMPLES_DIR)/%,$(EXAMPLE_CO))
 
 # Test sources (optional C tests)
 TEST_SRC = $(wildcard $(TESTS_DIR)/*.c)
 TEST_BIN = $(patsubst $(TESTS_DIR)/%.c,$(BUILD_DIR)/tests/%,$(TEST_SRC))
 
-# Default target: build compiler
-all: $(COMPILER)
+# Default: build compiler then examples
+all: $(TARGET) examples
 
-# Build compiler by delegating to src/Makefile
-$(COMPILER):
-	@mkdir -p $(BUILD_DIR)
-	@$(MAKE) -C $(SRC_DIR)
+# Build compiler by invoking src Makefile
+$(TARGET):
+	cd $(SRC_DIR) && $(MAKE)
 
 # Build all examples
 examples: $(EXAMPLE_BIN)
 
-$(BUILD_DIR)/examples/%: $(EXAMPLES_DIR)/%.co $(COMPILER)
-	@mkdir -p $(BUILD_DIR)/examples
+$(EXAMPLES_DIR)/%: $(EXAMPLES_DIR)/%.co $(TARGET)
 	@echo "Building example $<"
-	@$(COMPILER) build $< -o $@
+	@$(TARGET) build $< -o $@
 
 # Run all examples
 run-examples: examples
@@ -55,8 +53,9 @@ test: tests
 
 # Clean build artifacts
 clean:
-	@rm -rf $(BUILD_DIR)/*.o $(BUILD_DIR)/examples $(BUILD_DIR)/tests
 	@$(MAKE) -C $(SRC_DIR) clean
+	-rm -f $(EXAMPLE_BIN)
+	-rm -f $(EXAMPLES_DIR)/*.c
 
 .PHONY: all examples run-examples test clean
 

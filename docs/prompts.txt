@@ -1,7 +1,7 @@
-C Object and Method Extensions (COME) Development Master Prompts
+C Object and Module Extensions(COME) Development Master Prompts
 
 1. Design Goals Prompt
-You are assisting in the design of a new programming language called C Object and Method Extensions (COME).
+You are assisting in the design of a new programming language called C Object and Module Extensions (COME).
 
 Goals:
 - Retain C-like syntax and semantics for familiarity.
@@ -10,6 +10,9 @@ Goals:
 - Provide modern tooling (`come build`).
 - Compile to efficient native code like C.
 - Target use cases: systems programming, embedded, and server-side software.
+- Everything in a module. and two types of module
+- A source module is a compile-time namespace that groups related methods, types, and definitions. It has no runtime identity.
+- A runtime module is a stateful, memory-backed entity that exists during program execution and provides encapsulated behavior and data.
 
 When designing features, balance minimalism (like C) and usability (like Go).
 
@@ -20,11 +23,11 @@ Generate or refine the COME language specification.
 Inputs:
 - The comparison tables with C and Go (provided).
 - COME feature highlights:
-  * Package system (like Go).
+  * Module system (like Go package).
   * Interfaces and methods on structs.
   * Coroutines for concurrency.
-  * Context-based memory pools (instead of GC).
-  * UTF-16 immutable strings.
+  * Context-based memory pools, module specific (instead of GC).
+  * UTF-8 strings.
   * Multiple return values.
   * Optional semicolons.
   * Import-based module system (no headers).

@@ -1,3 +1,5 @@
+module main
+
 import std
 
 int main(string args[])
