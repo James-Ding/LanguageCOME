@@ -42,7 +42,7 @@ int lex_file(const char* filename, TokenList* out) {
             }
             else if(*p=='!'){
                 if(*(p+1)=='=') { tok.type=TOKEN_NEQ; strcpy(tok.text, "!="); p+=2; }
-                else { tok.type=TOKEN_UNKNOWN; tok.text[0]='!'; tok.text[1]='\0'; p++; }
+                else { tok.type=TOKEN_NOT; tok.text[0]='!'; tok.text[1]='\0'; p++; }
             }
             else if(*p=='>'){
                 if(*(p+1)=='=') { tok.type=TOKEN_GE; strcpy(tok.text, ">="); p+=2; }

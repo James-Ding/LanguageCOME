@@ -32,13 +32,59 @@ $(SUB_MAKE_DIRS):
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Test target for running COME tests in t/ directory
+# Usage: make test (from any module directory with a t/ subdirectory)
+.PHONY: test clean-test
+test:
+	@if [ -d t ]; then \
+		echo "Running tests in t/..."; \
+		echo "=============================="; \
+		passed=0; failed=0; \
+		for test in t/*.co; do \
+			[ -f "$$test" ] || continue; \
+			testname=$$(basename $$test .co); \
+			testbin="t/$$testname"; \
+			printf "  %-30s " "$$testname"; \
+			if $(TOP_DIR)/build/come build $$test -o $$testbin 2>/dev/null; then \
+				if $$testbin 2>/dev/null; then \
+					echo "✓ PASS"; \
+					passed=$$((passed + 1)); \
+				else \
+					echo "✗ FAIL (runtime)"; \
+					failed=$$((failed + 1)); \
+				fi; \
+			else \
+				echo "✗ FAIL (compile)"; \
+				failed=$$((failed + 1)); \
+			fi; \
+		done; \
+		echo "=============================="; \
+		echo "Results: $$passed passed, $$failed failed"; \
+		[ $$failed -eq 0 ]; \
+	else \
+		echo "No t/ directory found in $$(pwd)"; \
+		exit 1; \
+	fi
+
+# Clean test binaries and generated C files
+clean-test:
+	@if [ -d t ]; then \
+		echo "Cleaning test artifacts in t/..."; \
+		rm -f t/*.c; \
+		for test in t/*.co; do \
+			[ -f "$$test" ] || continue; \
+			testname=$$(basename $$test .co); \
+			rm -f "t/$$testname"; \
+		done; \
+	fi
+
 # Ensure build dir exists
 $(BUILD_DIR):
 	mkdir -p $@
 
 # Clean up
 .PHONY: clean $(SUB_DIRS)
-clean:
+clean: clean-test
 	rm -f $(OBJS) $(TARGET)
 	@for d in $(SUB_DIRS); do \
 		if [ -f $$d/Makefile ]; then \

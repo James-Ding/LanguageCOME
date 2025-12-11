@@ -57,6 +57,15 @@ static ASTNode* parse_expression() {
     ASTNode* node = NULL;
     Token* t = current();
     
+    // Handle NOT operator
+    if (t->type == TOKEN_NOT) {
+        advance();
+        ASTNode* not_node = ast_new(AST_CALL);
+        strcpy(not_node->text, "!");
+        not_node->children[not_node->child_count++] = parse_expression();
+        return not_node;
+    }
+    
     if (t->type == TOKEN_IDENTIFIER) {
         node = ast_new(AST_IDENTIFIER);
         strcpy(node->text, t->text);

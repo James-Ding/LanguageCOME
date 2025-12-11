@@ -109,9 +109,15 @@ static void generate_expression(FILE* f, ASTNode* node) {
         
         fprintf(f, ")");
     } else if (node->type == AST_CALL) {
-        generate_expression(f, node->children[0]);
-        fprintf(f, " %s ", node->text);
-        generate_expression(f, node->children[1]);
+        // Handle NOT operator
+        if (strcmp(node->text, "!") == 0) {
+            fprintf(f, "!");
+            generate_expression(f, node->children[0]);
+        } else {
+            generate_expression(f, node->children[0]);
+            fprintf(f, " %s ", node->text);
+            generate_expression(f, node->children[1]);
+        }
     }
 }
 
