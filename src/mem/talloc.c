@@ -37,3 +37,9 @@ void* mem_talloc_new_ctx(void* parent) {
     }
     return ctx;
 }
+
+void* mem_talloc_steal(void* new_ctx, void* ptr) {
+    if (!co_mem_root) mem_talloc_module_init();
+    if (!new_ctx) new_ctx = co_mem_root;
+    return talloc_steal(new_ctx, ptr);
+}

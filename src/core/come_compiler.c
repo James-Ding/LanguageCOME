@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include "lexer.h"
@@ -76,6 +77,30 @@ static void mkdir_p_for_file(const char *filepath) {
     }
 }
 
+/* Find project root by looking for build/come executable */
+static void get_project_root(char *out, size_t outsz) {
+    // Try to find the compiler executable
+    char exe_path[1024];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len != -1) {
+        exe_path[len] = '\0';
+        // exe_path is like /path/to/project/build/come
+        // Get directory of exe
+        char *last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0'; // Now exe_path is /path/to/project/build
+            last_slash = strrchr(exe_path, '/');
+            if (last_slash) {
+                *last_slash = '\0'; // Now exe_path is /path/to/project
+                snprintf(out, outsz, "%s", exe_path);
+                return;
+            }
+        }
+    }
+    // Fallback: assume current directory
+    snprintf(out, outsz, ".");
+}
+
 /* run a shell command; return non-zero if failed */
 static int run_cmd(const char *fmt, ...) {
     char buf[2048];
@@ -103,6 +128,8 @@ static void usage(const char *prog) {
 /* ---------- main ---------- */
 
 int main(int argc, char *argv[]) {
+    setbuf(stdout, NULL);
+    printf("COME compiler starting...\n");
     if (argc < 3 || strcmp(argv[1], "build") != 0) {
         usage(argv[0]);
         return 1;
@@ -152,6 +179,7 @@ int main(int argc, char *argv[]) {
     }
 
 	ASTNode *ast = NULL;
+    printf("Parsing file: %s\n", co_file);
 	if (parse_file(co_file, &ast) != 0 || !ast) {
 	    die("Parsing failed: %s", co_file);
 	}
@@ -169,15 +197,23 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+
     /* 4) Compile C -> executable */
     // Ensure directory for output exists if -o specified
     if (out_path) {
         mkdir_p_for_file(out_path);
     }
 
-    // Compile with gcc
-    // Note: you may want to add -I paths or link libs here later
-    if (run_cmd("gcc -Wall -g \"%s\" -o \"%s\"", c_file, bin_file) != 0) {
+    // Get project root
+    char project_root[1024];
+    get_project_root(project_root, sizeof(project_root));
+
+    // Compile with gcc using absolute paths
+    if (run_cmd("gcc -Wall -Wno-cpp -g -D__STDC_WANT_LIB_EXT1__=1 "
+                "-I%s/src/include -I%s/src/core/include -I%s/external/talloc/lib/talloc -I%s/external/talloc/lib/replace "
+                "\"%s\" %s/src/string/string.c %s/src/mem/talloc.c %s/external/talloc/lib/talloc/talloc.c -o \"%s\" -ldl", 
+                project_root, project_root, project_root, project_root,
+                c_file, project_root, project_root, project_root, bin_file) != 0) {
         ast_free(ast);
         die("GCC compilation failed");
     }

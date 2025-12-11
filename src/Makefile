@@ -1,6 +1,6 @@
 TOP_DIR=../
 # Subdirectories to build if they have Makefiles
-SUB_DIRS := core mem net
+SUB_DIRS := core mem string
 
 include $(TOP_DIR)/Makefile.inc
 
