@@ -427,11 +427,11 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                      raw_type[len-2] = '\0';
                      
                      // Construct array type name
-                     char arr_type[64];
+                     char arr_type[128];
                      if (strcmp(raw_type, "int")==0) strcpy(arr_type, "come_int_array_t");
                      else if (strcmp(raw_type, "byte")==0) strcpy(arr_type, "come_byte_array_t");
                      else if (strcmp(raw_type, "var")==0) strcpy(arr_type, "come_int_array_t"); // MVP hack
-                     else sprintf(arr_type, "come_array_%s_t", raw_type); // Fallback
+                     else snprintf(arr_type, sizeof(arr_type), "come_array_%s_t", raw_type); // Fallback
                      
                      if (init_expr->type == AST_AGGREGATE_INIT) {
                          // Static init: come_int_array_t* x = &...; // Hard to do inline.
