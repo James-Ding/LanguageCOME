@@ -66,12 +66,13 @@ static ASTNode* parse_primary() {
     ASTNode* node = NULL;
     Token* t = current();
     
-    // Handle NOT operator
-    if (t->type == TOKEN_NOT) {
+    // Handle NOT operators (logical and bitwise)
+    if (t->type == TOKEN_NOT || t->type == TOKEN_TILDE) {
+        TokenType op_type = t->type;  // Save before advancing
         advance();
-        ASTNode* not_node = ast_new(AST_UNARY_OP); // Use UNARY_OP
-        strcpy(not_node->text, "!");
-        not_node->children[not_node->child_count++] = parse_primary(); // Recurse primary for !
+        ASTNode* not_node = ast_new(AST_UNARY_OP);
+        strcpy(not_node->text, (op_type == TOKEN_NOT) ? "!" : "~");
+        not_node->children[not_node->child_count++] = parse_primary();
         return not_node;
     }
     
@@ -173,11 +174,34 @@ static ASTNode* parse_primary() {
         }
         expect(TOKEN_RBRACKET);
     } else if (match(TOKEN_LBRACE)) {
-        // Map/Struct initializer: { k: v, ... } or { }
+        // Map/Struct initializer: { k: v, ... } or { } or { .field = val, ... }
         node = ast_new(AST_AGGREGATE_INIT);
         strcpy(node->text, "MAP");
         while (current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
-             node->children[node->child_count++] = parse_expression();
+             // Check for designated initializer: .field = value
+             if (match(TOKEN_DOT)) {
+                 if (current()->type == TOKEN_IDENTIFIER) {
+                     // Create a special marker node for designated initializer
+                     ASTNode* desig = ast_new(AST_IDENTIFIER);
+                     // Store ".field" as text - limit to 126 chars to leave room for "." and null
+                     snprintf(desig->text, sizeof(desig->text), ".%.*s", 126, current()->text);
+                     advance(); // consume identifier
+                     
+                     if (match(TOKEN_ASSIGN)) {
+                         // Now parse the value
+                         ASTNode* value = parse_expression();
+                         
+                         // Create an assignment-like node to represent .field = value
+                         ASTNode* pair = ast_new(AST_ASSIGN);
+                         pair->children[pair->child_count++] = desig;
+                         pair->children[pair->child_count++] = value;
+                         
+                         node->children[node->child_count++] = pair;
+                     }
+                 }
+             } else {
+                 node->children[node->child_count++] = parse_expression();
+             }
              if (!match(TOKEN_COMMA)) break;
         }
         expect(TOKEN_RBRACE);
@@ -232,9 +256,18 @@ static ASTNode* parse_statement() {
         // Variable declaration: string s = ...
         // or int x = ...
         // or var x = ...
-        char type_name[32];
+        // or struct Point p = ...
+        char type_name[128];
         strcpy(type_name, t->text);
         advance();
+        
+        // Special handling for struct: "struct Type varname"
+        if (strcmp(type_name, "struct") == 0 && current()->type == TOKEN_IDENTIFIER) {
+            // Consume the struct type name
+            strcat(type_name, " ");
+            strcat(type_name, current()->text);
+            advance();
+        }
         
         // Check for array: string args[]
         if (match(TOKEN_IDENTIFIER)) {
@@ -272,7 +305,34 @@ static ASTNode* parse_statement() {
              return decl;
         }
     } else if (t->type == TOKEN_IDENTIFIER) {
-        // Check for custom type declaration: MyType x ...
+        // Check for assignments FIRST (before type declarations)
+        // Check lookahead for assignment operators
+        if (pos + 1 < tokens.count && 
+            (tokens.tokens[pos+1].type == TOKEN_ASSIGN || 
+             tokens.tokens[pos+1].type == TOKEN_PLUS_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_MINUS_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_STAR_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_SLASH_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_AND_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_OR_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_XOR_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_LSHIFT_ASSIGN ||
+             tokens.tokens[pos+1].type == TOKEN_RSHIFT_ASSIGN)) {
+              
+              ASTNode* assign = ast_new(AST_ASSIGN);
+              strcpy(assign->text, tokens.tokens[pos+1].text); // The operator
+              
+              ASTNode* lhs = ast_new(AST_IDENTIFIER);
+              strcpy(lhs->text, t->text);
+              assign->children[assign->child_count++] = lhs;
+              
+              advance(); // ident
+              advance(); // op
+              assign->children[assign->child_count++] = parse_expression();
+              return assign;
+        }
+        
+        // Then check for custom type declaration: MyType x ...
         // Lookahead 1
         if (pos + 1 < tokens.count && tokens.tokens[pos+1].type == TOKEN_IDENTIFIER) {
              // Treat as declaration
@@ -311,14 +371,6 @@ static ASTNode* parse_statement() {
              if (is_array) strcat(type_node->text, "[]");
              decl->children[decl->child_count++] = type_node;
              return decl;
-        } else if (pos + 1 < tokens.count && tokens.tokens[pos+1].type == TOKEN_EQ) {
-             // Identifier = Expr (Assignment)
-             ASTNode* assign = ast_new(AST_ASSIGN);
-             strcpy(assign->text, t->text); // var name
-             advance(); // Identifier
-             advance(); // =
-             assign->children[assign->child_count++] = parse_expression();
-             return assign;
         } else {
              // Maybe function call or expression statement?
              // Treat as expression statement

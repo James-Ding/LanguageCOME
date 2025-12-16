@@ -197,13 +197,32 @@ static void generate_expression(FILE* f, ASTNode* node) {
         
         fprintf(f, ")");
     } else if (node->type == AST_AGGREGATE_INIT) {
-        // { val, val }
+        // { val, val } or { .field = val, ... }
         fprintf(f, "{ ");
         if (node->child_count == 0) {
             fprintf(f, "0");
         } else {
             for (int i = 0; i < node->child_count; i++) {
-                generate_expression(f, node->children[i]);
+                ASTNode* child = node->children[i];
+                
+                // Check if this is a designated initializer (.field = value)
+                if (child->type == AST_ASSIGN && child->child_count >= 2) {
+                    ASTNode* designator = child->children[0];
+                    ASTNode* value = child->children[1];
+                    
+                    // Check if designator starts with '.'
+                    if (designator->type == AST_IDENTIFIER && designator->text[0] == '.') {
+                        // Emit as designated initializer
+                        fprintf(f, "%s = ", designator->text);
+                        generate_expression(f, value);
+                    } else {
+                        // Regular assignment, shouldn't happen in initializer
+                        generate_expression(f, child);
+                    }
+                } else {
+                    generate_expression(f, child);
+                }
+                
                 if (i < node->child_count - 1) fprintf(f, ", ");
             }
         }
@@ -473,7 +492,12 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                          fprintf(f, "%s %s = ", type_node->text, node->text);
                      }
                      
-                     if (init_expr && init_expr->type == AST_NUMBER && strcmp(init_expr->text, "0") == 0) {
+                     // For struct types with aggregate initializers, preserve the syntax
+                     if (init_expr && init_expr->type == AST_AGGREGATE_INIT && 
+                         strncmp(type_node->text, "struct", 6) == 0) {
+                         // Just emit the aggregate initializer as-is for structs
+                         generate_expression(f, init_expr);
+                     } else if (init_expr && init_expr->type == AST_NUMBER && strcmp(init_expr->text, "0") == 0) {
                           // Check if type is struct?
                           if (strncmp(type_node->text, "struct", 6) == 0) {
                               fprintf(f, "{0}");
@@ -684,8 +708,16 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             // union Name { ... };
             emit_indent(f, indent);
             fprintf(f, "union %s {\n", node->text);
-             for (int i = 0; i < node->child_count; i++) {
-                generate_node(f, node->children[i], indent + 4);
+            for (int i = 0; i < node->child_count; i++) {
+                // Handle Fields (AST_VAR_DECL) without init
+                ASTNode* field = node->children[i];
+                if (field->type == AST_VAR_DECL) {
+                    ASTNode* type = field->children[1];
+                    emit_indent(f, indent + 4);
+                    fprintf(f, "%s %s;\n", type->text, field->text);
+                } else {
+                    generate_node(f, field, indent + 4);
+                }
             }
             fprintf(f, "};\n");
             fprintf(f, "typedef union %s %s;\n", node->text, node->text);

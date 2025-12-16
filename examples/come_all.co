@@ -105,7 +105,7 @@ int demo(void) {
     int scaled[MAX_ARRAY]
 
     // Struct
-    struct Point p1 = { .x = 5, .y = 10 }
+    struct Point p1 = { .x = 15, .y = 10 }
     print_point(p1)
 
     // Function call
@@ -176,8 +176,8 @@ int demo(void) {
 
     dyn.free()  //free all dynamic blocks within dyn include buf
 
-    string sbuf = std.sprintf("Sum: %d", sum)
-    std.printf("%s", sbuf)
+    //string sbuf = std.sprintf("Sum: %d", sum)
+    //std.printf("%s", sbuf)
 
     double root = sqrt(16.0)
 
