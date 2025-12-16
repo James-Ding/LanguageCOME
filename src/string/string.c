@@ -610,3 +610,33 @@ come_string_list_t* come_string_list_from_argv(TALLOC_CTX* ctx, int argc, char* 
     }
     return list;
 }
+
+// Formatting
+#include <stdarg.h>
+
+come_string_t* come_string_sprintf(TALLOC_CTX* ctx, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    
+    // Calculate length
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+    
+    if (len < 0) {
+        va_end(args);
+        return NULL;
+    }
+    
+    come_string_t* s = come_string_new_len(ctx, "", len);
+    if (!s) {
+        va_end(args);
+        return NULL;
+    }
+    
+    vsnprintf(s->data, len + 1, fmt, args);
+    va_end(args);
+    
+    return s;
+}

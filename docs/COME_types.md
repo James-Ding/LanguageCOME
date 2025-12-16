@@ -1,6 +1,6 @@
 # COME Data Types
 
-The COME language provides a set of fixed-width primitive integer types and a  type.
+The COME language provides a set of fixed-width primitive types and composite types.
 
 ## Primitive Types
 
@@ -24,39 +24,92 @@ COME provides a set of fixed-width primitive types.
 
 ## Composite Types
 
-Composite types are structures built from other types.  
+Composite types are structures built from other types. 
 Their memory lifetime is managed by **explicit ownership**, tied to the parent composite variable or the containing module.
 
 | Type      | Declaration Syntax    | Initialization Syntax                           | Description                                                        |
 |-----------|------------------------|--------------------------------------------------|--------------------------------------------------------------------|
 | `string` | `string name;`         | `string name = "John"`                           | Immutable, UTF-8 encoded sequence of characters.                   |
-| `struct` | `MyStruct data;`       | `data = MyStruct{ field: value };`               | Custom aggregated data structure.                                  |
+| `struct/union` | `MyStruct data;`       | `data = MyStruct{ field: value };`               | Custom aggregated data structure.                                  |
 | `array`  | `T name[];`            | `int numbers[] = [10, 20, 30]`                   | Fixed-size collection. Size inferred from the initializer list `[]`. |
 | `map`    | `map map_name{};`      | `map students = { "name" : "John", "age" : 16 }` | Unordered key-value collection using `{}` for initialization.       |
 | `module` | *N/A*                  | *N/A*                                            | The top-level execution scope and lifetime container.               |
 
 
-## 3. Built-in Methods for Composite Types
+## Built-in Methods for Composite Types
 
 All composite variables automatically possess the following methods. These methods enable runtime introspection, memory size checks, and management of the object's memory lifetime via the ownership system.
- Composite Type `.length()` Returns (Logical ount).`.size()` Returns (Physical Bytes).
-
+ 
 | Method | Syntax | Return Type | Description |
 | :--- | :--- | :--- | :--- |
-| `type()` | `variable.type()` | `string` | Returns the **name of the object's dynamic type** as a lowercase string (e.g., `"string"`, `"map"`, `"mystruct"`). |
-| `length()` | `variable.length()` | `int` | Returns the **logical count** of elements/runes/pairs contained within the variable. |
+| `type()` | `variable.type()` | `string` | Returns the **name of the composite variable's type** as a lowercase string (e.g., `"string"`, `"map"`, `"struct"`). |
+| `length()` | `variable.length()` | `int` | Returns the **logical count** of elements/chars/pairs contained within the variable. |
 | `size()` | `variable.size()` | `long` | Returns the total memory size of the object, in **bytes**, including headers and contained data. |
-| `owner()` | `variable.owner()` | `composite` / `module` | Returns the **composite variable** or **module name** that currently owns the object. |
+| `owner()` | `variable.owner()` | `composite variable` / `module` Returns the **composite variable** or **module** that currently owns the object. |
 | `chown()` | `variable.chown(new_owner_var)` | `void` | Explicitly transfers the object and its memory subtree to the `new_owner_var` (a composite variable or a module name).  |
 
-#### **Length and Size Behavior**
+## Dynamic Type Inference `var`
 
+COME supports the dynamic placeholder type `var`, which allows variables to be declared without an explicit, concrete type.
 
+### Declaration and Realization
+
+The `var` keyword acts as a placeholder. The variable acquires and permanently locks its type based on the value of the **first assignment**. This is known as **type realization**.
+
+#### Declaration
+
+| Syntax | Description |
+| :--- | :--- |
+| `var x` | `x` is declared but has **no realized type** until the first assignment. |
+
+#### Realization on First Assignment (Immediate)
+
+If the variable is initialized immediately, its type is realized at the point of declaration.
+
+| Syntax | Realized Type |
+| :--- | :--- |
+| `var ivar = 123` | `ivar` $\rightarrow$ `int` (`i32`) |
+| `var svar = "hello"` | `svar` $\rightarrow$ `string` |
+| `var bvar = true` | `bvar` $\rightarrow$ `bool` |
+
+### Deferred Realization
+
+If the variable is declared without an initial value, the type is realized upon the first explicit assignment.
+
+```come
+var lvar
+// lvar currently has no concrete type
+lvar = svar.dup()
+// lvar type is now realized as string
+```
+
+### Rules of `var` Type Inference
+
+The `var` keyword provides flexibility in declaration while preserving COME's nature as a **strongly and statically typed language**. The type is determined and locked at the first assignment.
+
+| Rule | Description |
+| :--- | :--- |
+| **Type is Locked** | Once the variable receives its first assignment, its type is **permanently fixed**. |
+| **Subsequent Assignments** | Any assignment after type realization **must match** the locked type. |
+| **No Reassignment of Type** | Attempting to assign a value of a different type (e.g., assigning a `string` to a realized `int`) results in a **compile-time error**.  |
+| **Full Type Support** | Type inference works for all primitive (`int`, `double`, `bool`, etc.) and composite types (`array`, `map`, `struct`). |
+
+### Type Aliases in COME
+```come
+alias (u8 u16 u32 u64) = (ubyte ushort uint ulong)
+alias i64 = long
+alias u64 = ulong
+```
+
+### Examples
+
+| Code | Realization | Error Check |
 | :--- | :--- | :--- |
-| `string` | Number of **Unicode characters**. | Number of **bytes** (includes header). |
-| `array` | Number of **elements** (fixed capacity). | Total memory for the array and its elements. |
-| `map` | Number of **key-value pairs**. | Total memory used by the map structure (buckets, keys, values). |
-| `struct` | **fields** number of all fields of the struct| Total memory size of all fields in the struct. |
+| `var x` <br> `x = 3.14` | `x` becomes `double` (`f64`) | `x = 10` (Allowed) <br> `x = "ten"` (Error) |
+| `var y = [1, 2]` | `y` becomes `int array[]` | `y = [3, 4, 5]` (Allowed) <br> `y = ["a", "b"]` (Error) |
+| `var z` <br> `z = { "a": 1 }` | `z` becomes `map{key:value}` | `z = {}` (Allowed) <br> `z = "map"` (Error) |
+
+This behavior ensures that while declaration is flexible, COME remains a strongly and statically typed language throughout compilation.
 
 ### Usage Example
 

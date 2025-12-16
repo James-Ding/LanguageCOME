@@ -108,7 +108,7 @@ static int run_cmd(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    // fprintf(stderr, "[CMD] %s\n", buf); // uncomment for debug
+    fprintf(stderr, "[CMD] %s\n", buf); // uncomment for debug
     int rc = system(buf);
     return rc;
 }
@@ -180,16 +180,20 @@ int main(int argc, char *argv[]) {
 
 	ASTNode *ast = NULL;
     printf("Parsing file: %s\n", co_file);
+    fprintf(stderr, "DEBUG: Calling parse_file\n");
 	if (parse_file(co_file, &ast) != 0 || !ast) {
 	    die("Parsing failed: %s", co_file);
 	}
+    fprintf(stderr, "DEBUG: parse_file success. AST child count: %d\n", ast->child_count);
 
     /* 3) Codegen -> C file */
     // Ensure directory for c_file exists (same dir as .co; usually does)
+    fprintf(stderr, "DEBUG: Calling generate_c_from_ast\n");
     if (generate_c_from_ast(ast, c_file) != 0) {
         ast_free(ast);
         die("Code generation failed: %s", c_file);
     }
+    fprintf(stderr, "DEBUG: generate_c_from_ast success\n");
 
     if (generate_only) {
         printf("Generated C code: %s\n", c_file);
@@ -207,8 +211,10 @@ int main(int argc, char *argv[]) {
     // Get project root
     char project_root[1024];
     get_project_root(project_root, sizeof(project_root));
+    fprintf(stderr, "DEBUG: Project root: %s\n", project_root);
 
     // Compile with gcc using absolute paths
+    fprintf(stderr, "DEBUG: Running GCC\n");
     if (run_cmd("gcc -Wall -Wno-cpp -g -D__STDC_WANT_LIB_EXT1__=1 "
                 "-I%s/src/include -I%s/src/core/include -I%s/external/talloc/lib/talloc -I%s/external/talloc/lib/replace "
                 "\"%s\" %s/src/string/string.c %s/src/mem/talloc.c %s/external/talloc/lib/talloc/talloc.c -o \"%s\" -ldl", 
@@ -217,6 +223,7 @@ int main(int argc, char *argv[]) {
         ast_free(ast);
         die("GCC compilation failed");
     }
+    fprintf(stderr, "DEBUG: GCC success\n");
 
     /* 5) Cleanup and finish */
     // Remove intermediate C file to keep tree clean

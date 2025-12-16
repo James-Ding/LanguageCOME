@@ -18,12 +18,28 @@ typedef enum {
     AST_NUMBER,
     AST_IDENTIFIER,
     AST_ARRAY_ACCESS,
+    AST_MEMBER_ACCESS,
+    AST_TYPE_ALIAS,
+    AST_STRUCT_DECL,
+    AST_AGGREGATE_INIT, // { k: v, ... } or [ v, ... ]
     
     AST_NET_TCP_CONNECT,    // net.tcp.connect(addr)
     AST_NET_TCP_LISTEN,     // net.tcp.listen(addr)
     AST_NET_TCP_ACCEPT,     // net.tcp.accept(listener)
     AST_NET_TCP_ON,         // conn.on(EVENT) { ... }
     AST_NET_TCP_ADDR,       // net.tcp.Addr(...)
+    AST_CONST_DECL,
+    AST_ENUM_DECL,
+    AST_UNION_DECL,
+    AST_SWITCH,
+    AST_CASE,
+    AST_DEFAULT,
+    AST_FOR,
+    AST_DO_WHILE,
+    AST_BINARY_OP,
+    AST_UNARY_OP,
+    AST_EXPORT,
+    AST_IMPORT,
     AST_TYPE_END
 } ASTNodeType;
 

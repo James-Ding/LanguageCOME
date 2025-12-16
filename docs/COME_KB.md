@@ -2,13 +2,13 @@
 
 ## 1. Overview
 
-**COME (C Object and Method Extensions)** is a C-like programming language designed to:
-- Retain **C syntax and semantics** while adding object/method features.
+**COME (C Object and Module Extensions)** is a C-like programming language designed to:
+- Retain **C syntax and semantics** while adding object and module features.
 - Support **modules, coroutines, and event-driven I/O** (no threads).
 - Enable **safe, modular memory management** using `talloc`.
 - Compile efficiently to C with a one-to-one translation model.
 
-The compiler produces readable C code (`.co` → `.co.c` → native binary).
+The compiler can produce readable C code (`.co` → `.co.c` → native binary) if needed.
 
 ---
 

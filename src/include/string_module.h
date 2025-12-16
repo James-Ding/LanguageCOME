@@ -73,6 +73,11 @@ come_string_list_t* come_string_regex_groups(const come_string_t* a, const char*
 come_string_t* come_string_regex_replace(const come_string_t* a, const char* pattern, const char* repl, size_t count);
 
 // Memory Management
+// Memory Management
 void come_string_chown(come_string_t* a, TALLOC_CTX* new_ctx);
+
+// Formatting
+// format string is standard C format
+come_string_t* come_string_sprintf(TALLOC_CTX* ctx, const char* fmt, ...);
 
 #endif // COME_STRING_MODULE_H
