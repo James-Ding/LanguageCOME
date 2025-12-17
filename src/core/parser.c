@@ -35,6 +35,7 @@ ASTNode* ast_new(ASTNodeType type) {
     n->type = type;
     n->child_count = 0;
     n->text[0] = '\0';
+    n->source_line = (pos < tokens.count) ? tokens.tokens[pos].line : 0;
     return n;
 }
 
@@ -770,11 +771,21 @@ static ASTNode* parse_statement() {
                      match(TOKEN_FLOAT) || match(TOKEN_DOUBLE) ||
                      match(TOKEN_WCHAR) || match(TOKEN_MAP) || match(TOKEN_STRUCT)) {
                       
+                      char type_text[128];
+                      strcpy(type_text, tokens.tokens[pos-1].text);
+                      
+                      // Special case: if type is "struct", also consume the struct name
+                      if (strcmp(type_text, "struct") == 0 && current()->type == TOKEN_IDENTIFIER) {
+                          strcat(type_text, " ");
+                          strcat(type_text, current()->text);
+                          advance();
+                      }
+                      
                       ASTNode* node = ast_new(AST_TYPE_ALIAS);
                       strcpy(node->text, alias_name);
                       
                       ASTNode* target = ast_new(AST_IDENTIFIER);
-                      strcpy(target->text, tokens.tokens[pos-1].text);
+                      strcpy(target->text, type_text);
                       node->children[node->child_count++] = target;
                       return node;
                  }

@@ -26,7 +26,7 @@ typedef enum { TOKEN_EOF, TOKEN_IMPORT, TOKEN_MAIN, TOKEN_INT,
                TOKEN_LSHIFT_ASSIGN, TOKEN_RSHIFT_ASSIGN,
                TOKEN_UNKNOWN } TokenType;
 
-typedef struct { TokenType type; char text[128]; } Token;
+typedef struct { TokenType type; char text[128]; int line; } Token;
 typedef struct { Token tokens[4096]; int count; } TokenList;
 int lex_file(const char* filename, TokenList* out);
 #endif

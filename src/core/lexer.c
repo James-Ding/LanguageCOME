@@ -9,6 +9,7 @@ int lex_file(const char* filename, TokenList* out) {
     out->count = 0;
     char line[256];
     int in_block_comment = 0;
+    int line_num = 1;  // Track current line number for source mapping
     while(fgets(line,sizeof(line),f)) {
         char* p = line;
         while(*p) {
@@ -45,7 +46,7 @@ int lex_file(const char* filename, TokenList* out) {
             }
             
             Token tok;
-            tok.text[0]='\0'; tok.type=TOKEN_UNKNOWN;
+            tok.text[0]='\0'; tok.type=TOKEN_UNKNOWN; tok.line=line_num;
             
             // Helper for keyword matching with boundary check
             #define MATCH_KEYWORD(str, type_val) \
@@ -172,9 +173,10 @@ int lex_file(const char* filename, TokenList* out) {
             else { p++; continue; }
             out->tokens[out->count++]=tok;
         }
+        line_num++;  // Increment line number after processing each line
     }
     fclose(f);
-    Token eof={TOKEN_EOF,""};
+    Token eof={TOKEN_EOF,"", line_num};
     out->tokens[out->count++]=eof;
     return 0;
 }

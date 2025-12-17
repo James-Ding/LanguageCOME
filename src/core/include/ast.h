@@ -48,6 +48,7 @@ typedef struct ASTNode {
     char text[128];
     struct ASTNode* children[1024];
     int child_count;
+    int source_line;  // Line number in original COME source file
 } ASTNode;
 ASTNode* ast_new(ASTNodeType type);
 void ast_free(ASTNode* node);

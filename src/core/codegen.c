@@ -20,6 +20,25 @@ static void emit_c_string_literal(FILE* f, const char* s) {
     fprintf(f, "%s", s);
 }
 
+// Track source file for #line directives
+static const char* source_filename = NULL;
+static int last_emitted_line = -1;
+
+// Track current function return type for correct return statement generation
+static char current_function_return_type[128] = "";
+
+
+// Emit #line directive if needed
+static void emit_line_directive(FILE* f, ASTNode* node) {
+    if (!source_filename || !node || node->source_line <= 0) return;
+    
+    // Only emit if line changed to avoid clutter
+    if (node->source_line != last_emitted_line) {
+        fprintf(f, "\n#line %d \"%s\"\n", node->source_line, source_filename);
+        last_emitted_line = node->source_line;
+    }
+}
+
 static int enum_counter = 0;
 
 static void generate_expression(FILE* f, ASTNode* node) {
@@ -44,10 +63,17 @@ static void generate_expression(FILE* f, ASTNode* node) {
         generate_expression(f, node->children[1]);
         fprintf(f, ")");
     } else if (node->type == AST_MEMBER_ACCESS) {
-        // obj->field (assuming obj is pointer)
+        // Member access - use dot for struct values, arrow for pointers
         fprintf(f, "(");
         generate_expression(f, node->children[0]);
-        fprintf(f, ")->%s", node->text);
+        
+        // Heuristic: if object is "self" -> pointer -> arrow, otherwise dot
+        if (node->children[0]->type == AST_IDENTIFIER && strcmp(node->children[0]->text, "self") == 0) {
+            fprintf(f, ")->%s", node->text);
+        } else {
+            // Default to dot for struct values
+            fprintf(f, ").%s", node->text);
+        }
     } else if (node->type == AST_METHOD_CALL) {
         char* method = node->text;
         char c_func[256];
@@ -303,6 +329,10 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         ASTNode* ret_type = node->children[0];
         int body_idx = node->child_count - 1;
         
+        // Track return type for correct return statement generation
+        strncpy(current_function_return_type, ret_type->text, sizeof(current_function_return_type) - 1);
+        current_function_return_type[sizeof(current_function_return_type) - 1] = '\0';
+        
         emit_indent(f, indent);
         
         // Return type
@@ -394,6 +424,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 
     
     case AST_VAR_DECL: {
+        emit_line_directive(f, node);  // Emit #line for variable declaration
         ASTNode* type_node = node->children[1];
 
         ASTNode* init_expr = node->children[0];
@@ -452,38 +483,34 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                      else if (strcmp(raw_type, "var")==0) strcpy(arr_type, "come_int_array_t"); // MVP hack
                      else snprintf(arr_type, sizeof(arr_type), "come_array_%s_t", raw_type); // Fallback
                      
+                     
                      if (init_expr->type == AST_AGGREGATE_INIT) {
-                         // Static init: come_int_array_t* x = &...; // Hard to do inline.
-                         // Use compound literal? (C99)
-                         // (come_int_array_t[]){ { .items = (int[]){1,2}, .size=2 } }
-                         // Too complex for MVP.
-                         // Let's just create a static stack struct and point to it?
-                         // "come_int_array_t _val = { ... }; come_int_array_t* x = &_val;"
-                         // But we are in middle of block? C99 allows mixing.
-                         // generated code:
-                         // int _items_x[] = { ... };
-                         // come_int_array_t _arr_x = { .items=_items_x, .size=... };
-                         // come_int_array_t* x = &_arr_x;
-                         
+                         // Dynamic allocation with initializer
+                         // Allocate header and items, copy initializer values
                          char* init_type = raw_type;
                          if (strcmp(raw_type, "var")==0) init_type = "int"; // Hack
                          
-                         fprintf(f, "%s _val_%s = { .items = (%s[])", arr_type, node->text, init_type);
+                         int item_count = init_expr->child_count;
+                         
+                         // Generate: type* arr = malloc(sizeof(type)); arr->items = malloc(count * sizeof(elem)); arr->size = count;
+                         fprintf(f, "%s* %s = (%s*)malloc(sizeof(%s));\n", arr_type, node->text, arr_type, arr_type);
+                         emit_indent(f, indent);
+                         fprintf(f, "%s->items = (%s*)malloc(%d * sizeof(%s));\n", node->text, init_type, item_count, init_type);
+                         emit_indent(f, indent);
+                         fprintf(f, "%s->size = %d;\n", node->text, item_count);
+                         
+                         // Copy initializer values
+                         fprintf(f, "    { %s _init_vals[] = ", init_type);
                          generate_expression(f, init_expr);
-                         fprintf(f, ", .size = %d };\n", init_expr->child_count);
-                         emit_indent(f, indent);
-                         fprintf(f, "%s* %s = & _val_%s;\n", arr_type, node->text, node->text);
+                         fprintf(f, "; memcpy(%s->items, _init_vals, sizeof(_init_vals)); }\n", node->text);
                      } else {
-                         // Default init (NULL or empty)
-                         // "come_int_array_t _val_x = {0}; come_int_array_t* x = &_val_x;"
-                         // Or "come_int_array_t* x = calloc(1, sizeof...)"?
-                         // Dynamic arrays usually heap alloc header?
-                         // come example says "int dyn[]". "dyn.resize".
-                         // If I use stack header, resize works (updates pointer in struct).
-                         // So stack header is fine.
-                         fprintf(f, "%s _val_%s = {0};\n", arr_type, node->text);
+                         // Default init (empty dynamic array)
+                         // Allocate header only, items = NULL, size = 0
+                         fprintf(f, "%s* %s = (%s*)calloc(1, sizeof(%s));\n", arr_type, node->text, arr_type, arr_type);
                          emit_indent(f, indent);
-                         fprintf(f, "%s* %s = &_val_%s;\n", arr_type, node->text, node->text);
+                         fprintf(f, "%s->items = NULL;\n", node->text);
+                         emit_indent(f, indent);
+                         fprintf(f, "%s->size = 0;\n", node->text);
                      }
                 } else {
                      if (strcmp(type_node->text, "var")==0) {
@@ -562,6 +589,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
 
         case AST_IF: {
+            emit_line_directive(f, node);  // Emit #line for if statement
             emit_indent(f, indent);
             fprintf(f, "if (");
             generate_expression(f, node->children[0]);
@@ -595,11 +623,15 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 
         case AST_RETURN: {
             emit_indent(f, indent);
-            fprintf(f, "return ");
+            fprintf(f, "return");
             if (node->child_count > 0) {
+                fprintf(f, " ");
                 generate_expression(f, node->children[0]);
             } else {
-                fprintf(f, "0");
+                // Only emit 0 for non-void functions
+                if (strcmp(current_function_return_type, "void") != 0) {
+                    fprintf(f, " 0");
+                }
             }
             fprintf(f, ";\n");
             break;
@@ -658,6 +690,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
 
         case AST_ASSIGN: {
+            emit_line_directive(f, node);  // Emit #line for assignment
             emit_indent(f, indent);
             generate_expression(f, node->children[0]);
             fprintf(f, " %s ", node->text);
@@ -822,6 +855,17 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 int generate_c_from_ast(ASTNode* ast, const char* out_file) {
     FILE* f = fopen(out_file, "w");
     if (!f) return 1;
+    
+    // Set source filename for #line directives (convert .c to .co)
+    static char source_file[1024];
+    strncpy(source_file, out_file, sizeof(source_file) - 1);
+    source_file[sizeof(source_file) - 1] = '\0';
+    // Replace .c with .co
+    char* ext = strrchr(source_file, '.');
+    if (ext && strcmp(ext, ".c") == 0) {
+        strcpy(ext, ".co");
+    }
+    source_filename = source_file;
 
     fprintf(f, "#include <stdio.h>\n");
     fprintf(f, "#include <string.h>\n");

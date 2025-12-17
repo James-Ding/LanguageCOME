@@ -65,6 +65,8 @@ int main(string args)
 	} else {
 		std.printf("Usage: %s ipv4_str port\n", args[0])
 	}
+
+    return demo()
 }
 
 // Function prototype
@@ -181,6 +183,7 @@ int demo(void) {
 
     double root = sqrt(16.0)
 
+    std.printf("Debug info: %c %d %d %ld %f %f %d %f %d\n", c1, c2, c3, l, f, d, sum, root, p1.x)
     return 0
 }
 
