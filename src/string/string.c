@@ -13,20 +13,15 @@ come_string_t* come_string_new(TALLOC_CTX* ctx, const char* str) {
 }
 
 come_string_t* come_string_new_len(TALLOC_CTX* ctx, const char* str, size_t len) {
-    // Allocate struct
-    come_string_t* s = mem_talloc_alloc(ctx, sizeof(come_string_t));
+    // Allocate single block struct + data
+    come_string_t* s = mem_talloc_alloc(ctx, sizeof(come_string_t) + len + 1);
     if (!s) return NULL;
 
-    // Allocate data as child of struct
-    s->data = mem_talloc_alloc(s, len + 1);
-    if (!s->data) {
-        mem_talloc_free(s);
-        return NULL;
-    }
-
+    s->size = sizeof(come_string_t) + len + 1;
+    s->count = len;
+    
     memcpy(s->data, str, len);
     s->data[len] = '\0';
-    s->length = len;
     return s;
 }
 
@@ -35,7 +30,7 @@ void come_string_free(come_string_t* str) {
 }
 
 size_t come_string_size(const come_string_t* a) {
-    return a ? a->length : 0;
+    return a ? a->count : 0;
 }
 
 // Basic UTF-8 char counting
@@ -112,7 +107,7 @@ long come_string_rchr(const come_string_t* a, int c) {
 }
 
 long come_string_memchr(const come_string_t* a, int c, size_t n) {
-    void* p = memchr(a->data, c, n > a->length ? a->length : n);
+    void* p = memchr(a->data, c, n > a->count ? a->count : n);
     return p ? ((char*)p - a->data) : -1;
 }
 
@@ -124,9 +119,9 @@ long come_string_find(const come_string_t* a, const char* sub) {
 long come_string_rfind(const come_string_t* a, const char* sub) {
     // strrstr is not standard C, implement manually
     size_t sub_len = strlen(sub);
-    if (sub_len > a->length) return -1;
+    if (sub_len > a->count) return -1;
     
-    for (long i = a->length - sub_len; i >= 0; i--) {
+    for (long i = a->count - sub_len; i >= 0; i--) {
         if (strncmp(a->data + i, sub, sub_len) == 0) return i;
     }
     return -1;
@@ -147,28 +142,28 @@ size_t come_string_count(const come_string_t* a, const char* sub) {
 
 // Validation
 bool come_string_isdigit(const come_string_t* a) {
-    for (size_t i = 0; i < a->length; i++) {
+    for (size_t i = 0; i < a->count; i++) {
         if (!isdigit(a->data[i])) return false;
     }
     return true;
 }
 
 bool come_string_isalpha(const come_string_t* a) {
-    for (size_t i = 0; i < a->length; i++) {
+    for (size_t i = 0; i < a->count; i++) {
         if (!isalpha(a->data[i])) return false;
     }
     return true;
 }
 
 bool come_string_isalnum(const come_string_t* a) {
-    for (size_t i = 0; i < a->length; i++) {
+    for (size_t i = 0; i < a->count; i++) {
         if (!isalnum(a->data[i])) return false;
     }
     return true;
 }
 
 bool come_string_isspace(const come_string_t* a) {
-    for (size_t i = 0; i < a->length; i++) {
+    for (size_t i = 0; i < a->count; i++) {
         if (!isspace(a->data[i])) return false;
     }
     return true;
@@ -198,27 +193,27 @@ bool come_string_utf8(const come_string_t* a) {
 
 // Transformation
 come_string_t* come_string_upper(const come_string_t* a) {
-    come_string_t* new_str = come_string_new_len((void*)a, a->data, a->length);
-    for (size_t i = 0; i < new_str->length; i++) {
+    come_string_t* new_str = come_string_new_len((void*)a, a->data, a->count);
+    for (size_t i = 0; i < new_str->count; i++) {
         new_str->data[i] = toupper(new_str->data[i]);
     }
     return new_str;
 }
 
 come_string_t* come_string_lower(const come_string_t* a) {
-    come_string_t* new_str = come_string_new_len((void*)a, a->data, a->length);
-    for (size_t i = 0; i < new_str->length; i++) {
+    come_string_t* new_str = come_string_new_len((void*)a, a->data, a->count);
+    for (size_t i = 0; i < new_str->count; i++) {
         new_str->data[i] = tolower(new_str->data[i]);
     }
     return new_str;
 }
 
 come_string_t* come_string_repeat(const come_string_t* a, size_t n) {
-    size_t new_len = a->length * n;
+    size_t new_len = a->count * n;
     come_string_t* new_str = come_string_new_len((void*)a, "", new_len); // Alloc space
     // Manually fill
     for (size_t i = 0; i < n; i++) {
-        memcpy(new_str->data + (i * a->length), a->data, a->length);
+        memcpy(new_str->data + (i * a->count), a->data, a->count);
     }
     new_str->data[new_len] = '\0';
     return new_str;
@@ -240,7 +235,7 @@ come_string_t* come_string_replace(const come_string_t* a, const char* old_str, 
         if (n > 0 && count >= n) break;
     }
     
-    size_t final_len = a->length + count * (new_len_part - old_len);
+    size_t final_len = a->count + count * (new_len_part - old_len);
     come_string_t* res = come_string_new_len((void*)a, "", final_len);
     
     p = a->data;
@@ -281,7 +276,7 @@ static bool is_cutset(char c, const char* cutset) {
 come_string_t* come_string_trim(const come_string_t* a, const char* cutset) {
     if (!a) return NULL;
     size_t start = 0;
-    size_t end = a->length;
+    size_t end = a->count;
 
     while (start < end && is_cutset(a->data[start], cutset)) start++;
     while (end > start && is_cutset(a->data[end - 1], cutset)) end--;
@@ -294,7 +289,7 @@ come_string_t* come_string_trim(const come_string_t* a, const char* cutset) {
 come_string_t* come_string_ltrim(const come_string_t* a, const char* cutset) {
     if (!a) return NULL;
     size_t start = 0;
-    size_t end = a->length;
+    size_t end = a->count;
 
     while (start < end && is_cutset(a->data[start], cutset)) start++;
 
@@ -306,7 +301,7 @@ come_string_t* come_string_ltrim(const come_string_t* a, const char* cutset) {
 come_string_t* come_string_rtrim(const come_string_t* a, const char* cutset) {
     if (!a) return NULL;
     size_t start = 0;
-    size_t end = a->length;
+    size_t end = a->count;
 
     while (end > start && is_cutset(a->data[end - 1], cutset)) end--;
 
@@ -318,14 +313,14 @@ come_string_t* come_string_rtrim(const come_string_t* a, const char* cutset) {
 come_string_list_t* come_string_split_n(const come_string_t* a, const char* sep, size_t n) {
     if (!a || !sep) return NULL;
     
-    // Allocate list struct on 'a' context
-    come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t));
-    list->count = 0;
-    list->items = NULL;
-
     size_t sep_len = strlen(sep);
-    if (sep_len == 0) return list; // Or split by char? Spec says delimiter. Empty delimiter usually means split by char or error. Let's return empty or single item? Go returns split by char. C doesn't have standard. Let's assume error or single item for now.
-    // Actually, let's just return single item if sep is empty for simplicity unless spec says otherwise.
+    if (sep_len == 0) {
+        come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t) + sizeof(come_string_t*));
+        list->size = 1;
+        list->count = 1;
+        list->items[0] = come_string_new((void*)a, a->data);
+        return list;
+    }
     
     // First pass: count parts to alloc array
     size_t count = 1;
@@ -338,7 +333,9 @@ come_string_list_t* come_string_split_n(const come_string_t* a, const char* sep,
         p += sep_len;
     }
 
-    list->items = mem_talloc_alloc(list, sizeof(come_string_t*) * count);
+    // Allocate list struct with items FAM on 'a' context
+    come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t) + sizeof(come_string_t*) * count);
+    list->size = count;
     list->count = count;
 
     // Second pass: fill
@@ -367,15 +364,15 @@ come_string_list_t* come_string_split(const come_string_t* a, const char* sep) {
 }
 
 come_string_t* come_string_join(const come_string_list_t* list, const come_string_t* sep) {
-    if (!list || list->count == 0) return come_string_new_len(NULL, "", 0); // Context?
+    if (!list || list->size == 0) return come_string_new_len(NULL, "", 0); // Context?
     // If list is empty, return empty string. Context? Maybe list itself?
     // If sep is NULL, assume empty separator.
     
-    size_t sep_len = sep ? sep->length : 0;
+    size_t sep_len = sep ? sep->count : 0;
     size_t total_len = 0;
-    for (size_t i = 0; i < list->count; i++) {
-        if (list->items[i]) total_len += list->items[i]->length;
-        if (i < list->count - 1) total_len += sep_len;
+    for (size_t i = 0; i < list->size; i++) {
+        if (list->items[i]) total_len += list->items[i]->count;
+        if (i < list->size - 1) total_len += sep_len;
     }
 
     // Allocate on list context? Or sep context? Or new?
@@ -383,12 +380,12 @@ come_string_t* come_string_join(const come_string_list_t* list, const come_strin
     come_string_t* res = come_string_new_len((void*)list, "", total_len);
     
     char* p = res->data;
-    for (size_t i = 0; i < list->count; i++) {
+    for (size_t i = 0; i < list->size; i++) {
         if (list->items[i]) {
-            memcpy(p, list->items[i]->data, list->items[i]->length);
-            p += list->items[i]->length;
+            memcpy(p, list->items[i]->data, list->items[i]->count);
+            p += list->items[i]->count;
         }
-        if (i < list->count - 1 && sep) {
+        if (i < list->size - 1 && sep) {
             memcpy(p, sep->data, sep_len);
             p += sep_len;
         }
@@ -444,10 +441,6 @@ come_string_list_t* come_string_regex_split(const come_string_t* a, const char* 
     regex_t regex;
     if (regcomp(&regex, pattern, REG_EXTENDED) != 0) return NULL;
 
-    come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t));
-    list->count = 0;
-    list->items = NULL;
-
     // First pass: count
     size_t count = 1;
     const char* p = a->data;
@@ -467,7 +460,8 @@ come_string_list_t* come_string_regex_split(const come_string_t* a, const char* 
         p += pmatch[0].rm_eo;
     }
     
-    list->items = mem_talloc_alloc(list, sizeof(come_string_t*) * count);
+    come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t) + sizeof(come_string_t*) * count);
+    list->size = count;
     list->count = count;
 
     // Second pass: fill
@@ -475,18 +469,6 @@ come_string_list_t* come_string_regex_split(const come_string_t* a, const char* 
     matches = 0;
     for (size_t i = 0; i < count; i++) {
         if (regexec(&regex, p, 1, pmatch, 0) == 0 && (n == 0 || matches < n - 1)) {
-            // Avoid infinite loop on empty match
-            if (pmatch[0].rm_eo == pmatch[0].rm_so) {
-                 // Treat as no match at this point or handle specifically?
-                 // For split, empty match usually splits between characters.
-                 // POSIX regex split logic is tricky.
-                 // Simplification: if empty match, just skip or treat as match?
-                 // Let's assume non-empty matches for now or advance 1 char.
-                 // If we advance 1 char, we are splitting by empty string?
-                 // Let's stick to simple logic: match found -> split.
-                 // If empty match, we split at current position.
-            }
-            
             size_t len = pmatch[0].rm_so;
             list->items[i] = come_string_new_len(list, p, len);
             p += pmatch[0].rm_eo;
@@ -508,28 +490,31 @@ come_string_list_t* come_string_regex_groups(const come_string_t* a, const char*
     if (regcomp(&regex, pattern, REG_EXTENDED) != 0) return NULL;
 
     size_t nmatch = regex.re_nsub + 1; // 0 is full match, 1..n are groups
-    regmatch_t* pmatch = malloc(sizeof(regmatch_t) * nmatch);
+    regmatch_t* pmatch_vals = malloc(sizeof(regmatch_t) * nmatch);
     
-    come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t));
-    list->count = 0;
-    list->items = NULL;
-
-    if (regexec(&regex, a->data, nmatch, pmatch, 0) == 0) {
+    if (regexec(&regex, a->data, nmatch, pmatch_vals, 0) == 0) {
+        come_string_list_t* list = mem_talloc_alloc((void*)a, sizeof(come_string_list_t) + sizeof(come_string_t*) * nmatch);
+        list->size = nmatch;
         list->count = nmatch;
-        list->items = mem_talloc_alloc(list, sizeof(come_string_t*) * nmatch);
         for (size_t i = 0; i < nmatch; i++) {
-            if (pmatch[i].rm_so != -1) {
-                size_t len = pmatch[i].rm_eo - pmatch[i].rm_so;
-                list->items[i] = come_string_new_len(list, a->data + pmatch[i].rm_so, len);
+            if (pmatch_vals[i].rm_so != -1) {
+                size_t len = pmatch_vals[i].rm_eo - pmatch_vals[i].rm_so;
+                list->items[i] = come_string_new_len(list, a->data + pmatch_vals[i].rm_so, len);
             } else {
                 list->items[i] = NULL; // Optional group not matched
             }
         }
+        free(pmatch_vals);
+        regfree(&regex);
+        return list;
     }
 
-    free(pmatch);
+    free(pmatch_vals);
     regfree(&regex);
-    return list;
+    come_string_list_t* empty = mem_talloc_alloc((void*)a, sizeof(come_string_list_t));
+    empty->size = 0;
+    empty->count = 0;
+    return empty;
 }
 
 come_string_t* come_string_regex_replace(const come_string_t* a, const char* pattern, const char* repl, size_t count) {
@@ -602,9 +587,9 @@ size_t come_string_list_len(const come_string_list_t* list) {
 }
 
 come_string_list_t* come_string_list_from_argv(TALLOC_CTX* ctx, int argc, char* argv[]) {
-    come_string_list_t* list = mem_talloc_alloc(ctx, sizeof(come_string_list_t));
+    come_string_list_t* list = mem_talloc_alloc(ctx, sizeof(come_string_list_t) + sizeof(come_string_t*) * argc);
+    list->size = argc;
     list->count = argc;
-    list->items = mem_talloc_alloc(list, sizeof(come_string_t*) * argc);
     for (int i = 0; i < argc; i++) {
         list->items[i] = come_string_new(list, argv[i]);
     }
@@ -639,4 +624,45 @@ come_string_t* come_string_sprintf(TALLOC_CTX* ctx, const char* fmt, ...) {
     va_end(args);
     
     return s;
+}
+
+come_byte_array_t* come_string_to_byte_array(const come_string_t* a) {
+    if (!a) return NULL;
+    
+    // Allocate byte array structure with items FAM
+    come_byte_array_t* ba = mem_talloc_alloc((void*)a, sizeof(come_byte_array_t) + a->count);
+    if (!ba) return NULL;
+    
+    ba->size = a->count;
+    ba->count = a->count;
+    
+    memcpy(ba->items, a->data, a->count);
+    
+    return ba;
+}
+
+// Element Access
+come_string_t* come_string_at(const come_string_t* a, size_t index) {
+    if (!a) return NULL;
+    
+    const char* p = a->data;
+    size_t current_idx = 0;
+    
+    while (*p) {
+        if (current_idx == index) {
+            // Found the character start
+            const char* start = p;
+            // Advance to find end
+            do { p++; } while ((*p & 0xC0) == 0x80);
+            
+            size_t len = p - start;
+            return come_string_new_len((void*)a, start, len);
+        }
+        
+        // Advance
+        do { p++; } while ((*p & 0xC0) == 0x80);
+        current_idx++;
+    }
+    
+    return NULL; // Out of bounds
 }

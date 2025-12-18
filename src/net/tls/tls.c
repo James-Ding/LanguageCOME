@@ -16,13 +16,7 @@
 // --- Struct Definitions ---
 
 // net.tls.context (TLS/SSL configuration)
-typedef struct net_tls_context {
-    void* mem_ctx;
-    SSL_CTX* ssl_ctx;
-    char* cert_file; // For server/client auth
-    char* key_file;  // For server/client auth
-    int is_server;
-} net_tls_context;
+// net.tls.context defined in header
 
 // net.tls.connection (A secure connection)
 typedef struct net_tls_connection {
@@ -50,6 +44,9 @@ typedef struct net_tls_listener {
     
     // Event Handler
     void (*handler_accept)(struct net_tls_listener* listener, net_tls_connection* new_conn);
+    
+    // Pending connection for synchronous accept via callback
+    net_tls_connection* pending_conn;
 } net_tls_listener;
 
 // --- OpenSSL and Error Handling Helpers ---
@@ -180,7 +177,9 @@ static void tls_tcp_accept_handler(net_tcp_connection* tcp_listener, net_tcp_con
 
     // 3. Dispatch the high-level COME accept event
     if (tls_listener->handler_accept) {
+        tls_listener->pending_conn = new_tls_conn;
         tls_listener->handler_accept(tls_listener, new_tls_conn);
+        tls_listener->pending_conn = NULL;
     }
     
     // The COME user's handler should call net_tls_do_handshake() or it will be done on first data read.
@@ -248,4 +247,36 @@ void net_tls_on_data_ready(net_tls_connection* conn, void (*handler)(net_tls_con
 
 void net_tls_on_accept(net_tls_listener* listener, void (*handler)(net_tls_listener*, net_tls_connection*)) {
     listener->handler_accept = handler;
+}
+
+// --- Helpers for COME Interop ---
+
+// Helper for net.tls.listen("ip", port, ctx_val)
+// Takes context by value to match COME semantics, copies to heap for persistence.
+net_tls_listener* come_net_tls_listen_helper(void* mem_ctx, char* ip, int port, net_tls_context ctx_val) {
+    // Determine context for allocations (listener will own everything usually)
+    // Create new address
+    net_tcp_addr* addr = net_tcp_addr_make(ip, (uint16_t)port);
+    if (!addr) return NULL;
+
+    // Persist the context
+    // We allocate a new context on the heap, attached to mem_ctx (or we will attach to listener later)
+    net_tls_context* ctx_ptr = mem_talloc_alloc(mem_ctx, sizeof(net_tls_context));
+    if (!ctx_ptr) return NULL;
+    *ctx_ptr = ctx_val;
+    // Note: Shallow copy of fields (cert_file strings). Assuming they are static or managed elsewhere.
+    // If they are local strings in COME, they might die. But COME strings usually talloc'd.
+    
+    // Delegate to real listen
+    net_tls_listener* l = net_tls_listen(mem_ctx, addr, ctx_ptr);
+    // Address likely talloc'd on mem_ctx/tcp module context. 
+    // Ideally net_tls_listen should take ownership or we rely on it being valid.
+    
+    return l;
+}
+
+// Helper for listener.accept() - Retrieves the connection being processed in the callback
+net_tls_connection* net_tls_accept(net_tls_listener* listener) {
+    if (!listener) return NULL;
+    return listener->pending_conn;
 }

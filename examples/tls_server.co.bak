@@ -7,9 +7,9 @@ import std          // printing, etc.
 server() 
 {
     // 1. Create a TLS context (cert & key)
-    net.tls.context tls_ctx = {
-        cert_file: "server.crt",
-        key_file: "server.key",
+    net_tls_context tls_ctx = {
+        .cert_file = "server.crt",
+        .key_file = "server.key",
     }
 
     // 2. Listen on port 443 with the TLS context
@@ -29,9 +29,9 @@ server()
 
             // Very small “Hello, world” handler
             resp.send(
-                "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: text/plain\r\n" +
-                "Content-Length: 13\r\n\r\n" +
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 13\r\n\r\n"
                 "Hello, world"
             )
         }

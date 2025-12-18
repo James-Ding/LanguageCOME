@@ -45,7 +45,7 @@ typedef enum {
 
 typedef struct ASTNode {
     ASTNodeType type;
-    char text[128];
+    char text[4096];
     struct ASTNode* children[1024];
     int child_count;
     int source_line;  // Line number in original COME source file

@@ -1,0 +1,23 @@
+module array_test
+
+import std
+import array
+
+int main() {
+    int arr[5] = [1, 2, 3, 4, 5]
+    
+    if (arr.size() != 5) {
+        std.printf("FAIL: size mismatch, expected 5, got %d\n", arr.size())
+        return 1
+    }
+    
+    for (int i = 0; i < arr.size(); i++) {
+        if (arr[i] != i + 1) {
+            std.printf("FAIL: element %d mismatch, expected %d, got %d\n", i, i + 1, arr[i])
+            return 1
+        }
+    }
+    
+    std.printf("PASS: 01-basic\n")
+    return 0
+}

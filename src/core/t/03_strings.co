@@ -1,0 +1,21 @@
+int main() {
+    string s = "hello"
+    
+    // Length
+    std.printf("Length of 'hello': %d\n", s.len())
+    
+    // Upper
+    std.printf("Upper: %s\n", s.upper())
+    
+    // Comparison
+    if (s == "hello") {
+        std.printf("Pass: s == 'hello'\n")
+    }
+    
+    // Not equals
+    if (s != "world") {
+        std.printf("Pass: s != 'world'\n")
+    }
+
+    return 0
+}

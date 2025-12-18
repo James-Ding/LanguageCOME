@@ -1,0 +1,20 @@
+int main() {
+    byte b = 10
+    ubyte ub = 255
+    short s = -32000
+    ushort us = 65000
+    int i = -2000000000
+    uint ui = 4000000000
+    long l = -9000000000000000000
+    ulong ul = 18000000000000000000
+    float f = 3.14
+    double d = 3.1415926535
+    bool tf = true
+    bool ff = false
+    wchar c = 'X'
+    string str = "Hello Core"
+    string str_empty = ""
+
+    std.printf("Types test passed if this prints and compiles.\n")
+    return 0
+}

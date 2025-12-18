@@ -22,52 +22,9 @@ typedef struct generic_connection {
 
 // --- Struct Definitions ---
 
-// HTTP Message Headers (Simplified)
-typedef struct http_headers {
-    void* mem_ctx;
-    // In a real implementation, this would be a hash map or linked list
-    char* host;
-    int content_length;
-} http_headers;
-
-// net.http.request (req)
-typedef struct net_http_request {
-    void* mem_ctx;
-    char* method; // GET, POST, etc.
-    char* path;
-    char* version;
-    http_headers* headers;
-    char* body; // Simplified: holds the full body once READY
-    
-    // Event Handlers (Incoming and Outgoing)
-    void (*handler_line_ready)(struct net_http_request* req);
-    void (*handler_header_ready)(struct net_http_request* req);
-    void (*handler_data_ready)(struct net_http_request* req);
-    void (*handler_ready)(struct net_http_request* req); // Incoming READY
-    void (*handler_done)(struct net_http_request* req); // Outgoing DONE
-
-} net_http_request;
-
-// net.http.response (resp)
-typedef struct net_http_response {
-    void* mem_ctx;
-    int status_code;
-    char* status_text;
-    char* version;
-    http_headers* headers;
-    char* body; // Simplified: holds the full body once READY
-    
-    // Event Handlers (Incoming and Outgoing)
-    void (*handler_line_ready)(struct net_http_response* resp);
-    void (*handler_header_ready)(struct net_http_response* resp);
-    void (*handler_data_ready)(struct net_http_response* resp);
-    void (*handler_ready)(struct net_http_response* resp); // Incoming READY
-    void (*handler_done)(struct net_http_response* resp); // Outgoing DONE
-
-} net_http_response;
-
-// net.http.session
-typedef struct net_http_session {
+// Structs moved to header
+// net.http.session_internal
+typedef struct net_http_session_internal {
     void* mem_ctx;
     net_http_request* req;
     net_http_response* resp;
@@ -79,7 +36,7 @@ typedef struct net_http_session {
     int is_server_side;
 
     
-} net_http_session;
+} net_http_session_internal;
 
 // --- llhttp Callbacks Prototypes ---
 int handle_on_message_begin(llhttp_t* parser);
@@ -113,7 +70,7 @@ int handle_on_header_value(llhttp_t* parser, const char* at, size_t length) {
 }
 
 int handle_on_headers_complete(llhttp_t* parser) {
-    net_http_session* session = (net_http_session*)parser->data;
+    net_http_session_internal* session = (net_http_session_internal*)parser->data;
     if (session->is_server_side) {
         if (session->req->handler_header_ready) session->req->handler_header_ready(session->req);
     } else {
@@ -123,7 +80,7 @@ int handle_on_headers_complete(llhttp_t* parser) {
 }
 
 int handle_on_body(llhttp_t* parser, const char* at, size_t length) {
-    net_http_session* session = (net_http_session*)parser->data;
+    net_http_session_internal* session = (net_http_session_internal*)parser->data;
     // Append body data
     if (session->is_server_side) {
         if (session->req->handler_data_ready) session->req->handler_data_ready(session->req);
@@ -134,7 +91,7 @@ int handle_on_body(llhttp_t* parser, const char* at, size_t length) {
 }
 
 int handle_on_message_complete(llhttp_t* parser) {
-    net_http_session* session = (net_http_session*)parser->data;
+    net_http_session_internal* session = (net_http_session_internal*)parser->data;
     if (session->is_server_side) {
         if (session->req->handler_ready) session->req->handler_ready(session->req);
     } else {
@@ -145,7 +102,7 @@ int handle_on_message_complete(llhttp_t* parser) {
 
 // Low-level handler that is called when the transport has data
 static void __attribute__((unused)) http_transport_data_ready_handler(generic_connection* transport_conn) {
-    net_http_session* session = (net_http_session*)transport_conn->mem_ctx;
+    net_http_session_internal* session = (net_http_session_internal*)transport_conn->mem_ctx;
     
     // Read data from the transport layer
     char buffer[4096];
@@ -169,7 +126,7 @@ static void __attribute__((unused)) http_transport_data_ready_handler(generic_co
 
 // net.http.new()
 net_http_session* net_http_new(void* mem_ctx, int is_server_side) {
-    net_http_session* session = (net_http_session*)mem_talloc_alloc(mem_ctx, sizeof(net_http_session));
+    net_http_session_internal* session = (net_http_session_internal*)mem_talloc_alloc(mem_ctx, sizeof(net_http_session_internal));
     if (!session) return NULL;
 
     session->mem_ctx = session;
@@ -199,7 +156,12 @@ net_http_session* net_http_new(void* mem_ctx, int is_server_side) {
     session->resp->mem_ctx = session;
     // Initialize other fields/handlers to NULL
 
-    return session;
+    return (net_http_session*)session;
+}
+
+// Helper for net.http.new() - Defaults to server side
+net_http_session* come_net_http_new_default(void* mem_ctx) {
+    return net_http_new(mem_ctx, 1);
 }
 
 // net.http.attach(conn)
@@ -214,7 +176,7 @@ void net_http_attach(net_http_session* session, generic_connection* conn) {
 // net.http.request.send(content)
 void net_http_request_send(net_http_request* req, const char* content) {
     // Simplified: format headers + content and send over the transport layer
-    net_http_session* session = (net_http_session*)req->mem_ctx;
+    net_http_session_internal* session = (net_http_session_internal*)req->mem_ctx;
     if (!session->transport) return;
 
     // Form the HTTP message (omitted: complex formatting)

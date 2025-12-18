@@ -16,7 +16,7 @@ int main() {
     }
 
     const char* out_file = "build/tests/test_output.c";
-    if (generate_c_from_ast(root, out_file) != 0) {
+    if (generate_c_from_ast(root, out_file, "tests/test_files/hello.co") != 0) {
         printf("Codegen failed\n");
         return 1;
     }

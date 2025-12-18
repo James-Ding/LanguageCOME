@@ -11,6 +11,7 @@ import (  // import multiple modules
 	mem
 )
 
+export (PI, Point, add)
 const PI = 3.14
 
 //const enum, also multiple consts
@@ -38,19 +39,18 @@ union TwoBytes {
 
 // Struct
 struct Point {
-    int x;
-    int y;
-};
+    int x
+    int y
+}
 
 // Struct with method
 struct TCP_ADDR {
 	tcpport_t portnumber
     byte ipaddr[16]
-    method nport()
 }
 
 //define a method
-byte nport()
+byte TCP_ADDR.nport()
 {
 	return net.hton(self.portnumber)
 }
@@ -60,7 +60,7 @@ int main(string args)
 	struct TCP_ADDR addr
 
 	if (args.length() > 2) {
-		addr.portnumber = conv.atoi(args[2])
+		//addr.portnumber = (ushort)conv.strtol(args[2])
         mem.cpy(addr.ipaddr, args[1].byte_array(), addr.ipaddr.size())
 	} else {
 		std.printf("Usage: %s ipv4_str port\n", args[0])
@@ -181,9 +181,10 @@ int demo(void) {
     //string sbuf = std.sprintf("Sum: %d", sum)
     //std.printf("%s", sbuf)
 
-    double root = sqrt(16.0)
+    //double root = sqrt(16.0)
 
-    std.printf("Debug info: %c %d %d %ld %f %f %d %f %d\n", c1, c2, c3, l, f, d, sum, root, p1.x)
+    std.printf("Debug info: %c %d %d %ld %f %f\n", c1, c2, c3, l, f, d)
+    std.printf("Debug info continue: %d %d %d\n", sum, p1.x, scaled[0])
     return 0
 }
 
@@ -197,4 +198,4 @@ int add(int a, int b) {
     return (a + b), (a > b) ? ">" : "<="  
 }
 
-export (PI, Point, add) 
+

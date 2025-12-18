@@ -1,0 +1,35 @@
+int main() {
+    int x = 10
+    int y = 20
+
+    if (x < y) {
+        std.printf("Pass: 10 < 20\n")
+    } else {
+        std.printf("Fail: 10 < 20\n")
+    }
+
+    if (x > y) {
+        std.printf("Fail: 10 > 20\n")
+    } else {
+        std.printf("Pass: 10 not > 20\n")
+    }
+
+    if (x == 10) {
+        std.printf("Pass: x == 10\n")
+    }
+
+    if (y != 10) {
+        std.printf("Pass: y != 10\n")
+    }
+    
+    // Check bool literals
+    if (true) {
+        std.printf("Pass: true\n")
+    }
+    
+    if (false) {
+        std.printf("Fail: false\n")
+    }
+
+    return 0
+}

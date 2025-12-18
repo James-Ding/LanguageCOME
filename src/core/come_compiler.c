@@ -189,7 +189,7 @@ int main(int argc, char *argv[]) {
     /* 3) Codegen -> C file */
     // Ensure directory for c_file exists (same dir as .co; usually does)
     fprintf(stderr, "DEBUG: Calling generate_c_from_ast\n");
-    if (generate_c_from_ast(ast, c_file) != 0) {
+    if (generate_c_from_ast(ast, c_file, co_file) != 0) {
         ast_free(ast);
         die("Code generation failed: %s", c_file);
     }
@@ -217,9 +217,9 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: Running GCC\n");
     if (run_cmd("gcc -Wall -Wno-cpp -g -D__STDC_WANT_LIB_EXT1__=1 "
                 "-I%s/src/include -I%s/src/core/include -I%s/external/talloc/lib/talloc -I%s/external/talloc/lib/replace "
-                "\"%s\" %s/src/string/string.c %s/src/mem/talloc.c %s/external/talloc/lib/talloc/talloc.c -o \"%s\" -ldl", 
+                "\"%s\" %s/src/string/string.c %s/src/array/array.c %s/src/mem/talloc.c %s/external/talloc/lib/talloc/talloc.c -o \"%s\" -ldl", 
                 project_root, project_root, project_root, project_root,
-                c_file, project_root, project_root, project_root, bin_file) != 0) {
+                c_file, project_root, project_root, project_root, project_root, bin_file) != 0) {
         ast_free(ast);
         die("GCC compilation failed");
     }

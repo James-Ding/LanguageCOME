@@ -23,6 +23,12 @@ void* mem_talloc_alloc(void* ctx, size_t size) {
     return talloc_size(ctx, size);
 }
 
+void* mem_talloc_realloc(void* ctx, void* ptr, size_t size) {
+    if (!co_mem_root) mem_talloc_module_init();
+    if (!ctx) ctx = co_mem_root;
+    return talloc_realloc_size(ctx, ptr, size);
+}
+
 void mem_talloc_free(void* ptr) {
     if (ptr)
         talloc_free(ptr);

@@ -3,13 +3,18 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include "array_module.h"
 
 // Forward declaration for talloc context
 typedef void TALLOC_CTX;
 
-typedef struct {
-    char* data;
-    size_t length; // byte length, excluding null terminator
+
+
+typedef struct come_string_t {
+    uint32_t size;  // Total allocated capacity (bytes)
+    uint32_t count; // Number of characters used
+    char data[];    // Flexible array member
 } come_string_t;
 
 // Constructor/Destructor
@@ -49,13 +54,12 @@ come_string_t* come_string_trim(const come_string_t* a, const char* cutset);
 come_string_t* come_string_ltrim(const come_string_t* a, const char* cutset);
 come_string_t* come_string_rtrim(const come_string_t* a, const char* cutset);
 
+// Element Access
+come_string_t* come_string_at(const come_string_t* a, size_t index);
+
 // Splitting/Joining
 // Note: These return arrays/lists, we'll define a simple list structure or use char** for now
 // For MVP, we might skip complex list returns or define a simple string_list_t
-typedef struct {
-    come_string_t** items;
-    size_t count;
-} come_string_list_t;
 
 come_string_list_t* come_string_split(const come_string_t* a, const char* sep);
 come_string_list_t* come_string_split_n(const come_string_t* a, const char* sep, size_t n);
@@ -79,5 +83,8 @@ void come_string_chown(come_string_t* a, TALLOC_CTX* new_ctx);
 // Formatting
 // format string is standard C format
 come_string_t* come_string_sprintf(TALLOC_CTX* ctx, const char* fmt, ...);
+
+// Conversions
+come_byte_array_t* come_string_to_byte_array(const come_string_t* a);
 
 #endif // COME_STRING_MODULE_H
