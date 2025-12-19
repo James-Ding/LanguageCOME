@@ -192,6 +192,14 @@ static ASTNode* parse_primary() {
                 access->children[access->child_count++] = node; // Array
                 access->children[access->child_count++] = index; // Index
                 node = access;
+            } else if (match(TOKEN_INC)) {
+                ASTNode* inc = ast_new(AST_POST_INC);
+                inc->children[inc->child_count++] = node;
+                node = inc;
+            } else if (match(TOKEN_DEC)) {
+                ASTNode* dec = ast_new(AST_POST_DEC);
+                dec->children[dec->child_count++] = node;
+                node = dec;
             } else {
                 break;
             }
@@ -339,7 +347,13 @@ static ASTNode* parse_statement() {
             advance();
         }
         
-        // Check for array: string args[]
+        // Check for array type: int[] x
+        while (match(TOKEN_LBRACKET)) {
+             while(current()->type != TOKEN_RBRACKET && current()->type != TOKEN_EOF) advance();
+             expect(TOKEN_RBRACKET);
+             strcat(type_name, "[]");
+        }
+
         if (match(TOKEN_IDENTIFIER)) {
             char var_name[64];
             strcpy(var_name, tokens.tokens[pos-1].text);
@@ -1001,6 +1015,7 @@ static void parse_const(ASTNode* program) {
      // const ( ... ) OR const X = ...
      advance();
      if (match(TOKEN_LPAREN)) {
+         ASTNode* group = ast_new(AST_CONST_GROUP);
          while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
              // Ident [= val] [, or newline]
              if (current()->type == TOKEN_IDENTIFIER) {
@@ -1028,13 +1043,14 @@ static void parse_const(ASTNode* program) {
                      ASTNode* en = ast_new(AST_ENUM_DECL);
                      node->children[node->child_count++] = en;
                  }
-                 program->children[program->child_count++] = node;
+                 group->children[group->child_count++] = node;
                  match(TOKEN_COMMA);
              } else {
                  advance(); // skip unknown in block
              }
          }
          expect(TOKEN_RPAREN);
+         program->children[program->child_count++] = group;
      } else {
          // const X = ...
          if (expect(TOKEN_IDENTIFIER)) {

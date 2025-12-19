@@ -1,6 +1,6 @@
 # 1. Overview
 
-COME is a systems programming language inspired by C, designed to retain C’s mental model while removing common footguns.
+COME(C Object and Module Extensions) is a systems programming language inspired by C. It preserves C’s mental model while removing common pitfalls.
 
 Key design goals:
 
@@ -32,6 +32,75 @@ COME supports both single-line and multi-line comments.
 ```
 
 # 3. Modules and Imports
+Every source file declares exactly one module:
+
+module name
+
+
+main is the program entry module.
+
+Imports expose exported symbols under a module namespace.
+
+as forces system-module import.
+
+Local modules cannot use as.
+
+Module Resolution
+
+Import X is resolved in order:
+
+./X.co
+
+./modules/X/*.co
+
+System module depot
+
+Found in (1–2): local module
+
+Found in (3): system module
+
+Local vs System Modules
+
+Local modules
+
+Have private memory contexts
+
+May define:
+
+void module_init()
+void module_exit()
+
+
+Lifecycle is managed by main
+
+Init order follows import order
+
+Exit order is reversed
+
+System modules
+
+API-only
+
+No memory context
+
+No lifecycle functions
+
+Export
+
+Symbols are private by default
+
+Explicit export required:
+
+export (PI, Point, add)
+
+Namespaces
+
+Access via:
+
+module.symbol
+
+
+No implicit imports into global scope
 
 ## 3.1 Importing Modules
 
@@ -190,7 +259,7 @@ int arr[10]
 
 ```come
 int dyn[]
-dyn.alloc(3)
+dyn.resize(3)
 dyn.free()
 ```
 

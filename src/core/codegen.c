@@ -23,6 +23,7 @@ static void emit_c_string_literal(FILE* f, const char* s) {
 // Track source file for #line directives
 static const char* source_filename = NULL;
 static int last_emitted_line = -1;
+static int g_gen_line_map = 1;
 
 // Track current function return type for correct return statement generation
 static char current_function_return_type[128] = "";
@@ -30,7 +31,7 @@ static char current_function_return_type[128] = "";
 
 // Emit #line directive if needed
 static void emit_line_directive(FILE* f, ASTNode* node) {
-    if (!source_filename || !node || node->source_line <= 0) return;
+    if (!g_gen_line_map || !source_filename || !node || node->source_line <= 0) return;
     
     // Only emit if line changed to avoid clutter
     if (node->source_line != last_emitted_line) {
@@ -68,6 +69,46 @@ static int is_pointer_expression(ASTNode* node) {
 }
 
 static int enum_counter = 0;
+static char* seen_structs[256];
+static int seen_count = 0;
+
+static int is_struct_seen(const char* name) {
+    for (int i=0; i<seen_count; i++) {
+        if (strcmp(seen_structs[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void mark_struct_seen(const char* name) {
+    if (!is_struct_seen(name) && seen_count < 256) {
+        seen_structs[seen_count++] = strdup(name);
+    }
+}
+
+static const char* infer_const_type(ASTNode* node) {
+    if (!node) return "int";
+    if (node->type != AST_NUMBER) return "int";
+    
+    char* text = node->text;
+    if (strchr(text, '.') || strstr(text, "f") || strstr(text, "F")) {
+        // Default floating point literals to float per user preference
+        return "float";
+    }
+    
+    int is_unsigned = (strstr(text, "u") != NULL || strstr(text, "U") != NULL);
+    int is_long = (strstr(text, "l") != NULL || strstr(text, "L") != NULL);
+    int is_long_long = (strstr(text, "LL") != NULL || strstr(text, "ll") != NULL);
+    
+    if (is_unsigned) {
+        if (is_long_long) return "unsigned long long";
+        if (is_long) return "unsigned long";
+        return "unsigned int";
+    }
+    if (is_long_long) return "long long";
+    if (is_long) return "long";
+    
+    return "int";
+}
 
 static void generate_expression(FILE* f, ASTNode* node) {
     if (!node) {
@@ -256,7 +297,7 @@ static void generate_expression(FILE* f, ASTNode* node) {
         
         // Append ctx for specific functions?
         if (strcmp(c_func, "come_string_sprintf") == 0) {
-            fprintf(f, "ctx");
+            fprintf(f, "come_global_ctx");
             first_arg = 0;
         }
 
@@ -383,6 +424,12 @@ static void generate_expression(FILE* f, ASTNode* node) {
     } else if (node->type == AST_UNARY_OP) {
         fprintf(f, "%s", node->text); 
         generate_expression(f, node->children[0]);
+    } else if (node->type == AST_POST_INC) {
+        generate_expression(f, node->children[0]);
+        fprintf(f, "++");
+    } else if (node->type == AST_POST_DEC) {
+        generate_expression(f, node->children[0]);
+        fprintf(f, "--");
     } else if (node->type == AST_BINARY_OP) {
         fprintf(f, "(");
         generate_expression(f, node->children[0]);
@@ -459,17 +506,19 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             current_function_return_type[sizeof(current_function_return_type) - 1] = '\0';
         }
         
+        int is_main = (strcmp(node->text, "main") == 0);
+        char func_name[256];
+        if (is_main) {
+             strcpy(func_name, "_come_user_main");
+        } else {
+             strcpy(func_name, node->text);
+        }
+
         emit_indent(f, indent);
         
         // Return type
-        int is_main = (strcmp(node->text, "main") == 0);
-        fprintf(stderr, "[DEBUG] Function: '%s', is_main: %d\n", node->text, is_main);
-        if (is_main) {
-            fprintf(f, "int main(int argc, char* argv[]");
-        } else {
-             // Handle "byte" etc alias?? no, just print text
-             fprintf(f, "%s %s(", ret_type->text, node->text);
-        }
+        // Handle "byte" etc alias?? no, just print text
+        fprintf(f, "%s %s(", ret_type->text, func_name);
         
         // Args
         int has_args = 0;
@@ -481,36 +530,38 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
         
         // Iterate manual args
-        if (!is_main) {
-            for (int i = 1; i < body_idx; i++) {
-                if (has_args) fprintf(f, ", ");
+        for (int i = 1; i < body_idx; i++) {
+            if (has_args) fprintf(f, ", ");
+            
+            ASTNode* arg = node->children[i];
+            if (arg->type == AST_VAR_DECL) {
+                // int x
+                ASTNode* type = arg->children[1];
                 
-                ASTNode* arg = node->children[i];
-                if (arg->type == AST_VAR_DECL) {
-                    // int x
-                    ASTNode* type = arg->children[1];
-                    
-                    // array?
-                    if (strstr(type->text, "[]")) {
-                        // int input[] -> come_int_array_t* input
-                         char raw[64];
-                         strncpy(raw, type->text, strlen(type->text)-2);
-                         raw[strlen(type->text)-2] = 0;
-                         if (strcmp(raw, "int")==0) fprintf(f, "come_int_array_t* %s", arg->text);
-                         else if (strcmp(raw, "byte")==0) fprintf(f, "come_byte_array_t* %s", arg->text);
-                         else fprintf(f, "come_array_t* %s", arg->text);
-                    } else {
-                       fprintf(f, "%s %s", type->text, arg->text);
-                    }
+                // array?
+                if (strstr(type->text, "[]")) {
+                    // int input[] -> come_int_array_t* input
+                     char raw[64];
+                     strncpy(raw, type->text, strlen(type->text)-2);
+                     raw[strlen(type->text)-2] = 0;
+                     if (strcmp(raw, "int")==0) fprintf(f, "come_int_array_t* %s", arg->text);
+                     else if (strcmp(raw, "byte")==0) fprintf(f, "come_byte_array_t* %s", arg->text);
+                     else if (strcmp(raw, "string")==0) fprintf(f, "come_string_list_t* %s", arg->text);
+                     else fprintf(f, "come_array_t* %s", arg->text);
+                } else if (is_main && strncmp(arg->text, "args", 4) == 0 && (strcmp(type->text, "string") == 0 || strcmp(type->text, "string[]") == 0)) {
+                    // special case for main(string args) -> we pass string list
+                    fprintf(f, "come_string_list_t* %s", arg->text);
                 } else {
-                    // Fallback
-                    fprintf(f, "void* %s", arg->text);
+                   fprintf(f, "%s %s", type->text, arg->text);
                 }
-                has_args = 1;
+            } else {
+                // Fallback
+                fprintf(f, "void* %s", arg->text);
             }
+            has_args = 1;
         }
 
-        if (!has_args && !is_main) {
+        if (!has_args) {
             fprintf(f, "void");
         }
         
@@ -520,40 +571,39 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         if (body->type == AST_BLOCK) {
             fprintf(f, " {\n");
             
-            if (is_main) {
-                 emit_indent(f, indent + 4);
-                 fprintf(f, "come_global_ctx = mem_talloc_new_ctx(NULL);\n");
-                 
-                 // Inject args conversion if needed
-                 for (int i = 1; i < body_idx; i++) {
-                     ASTNode* arg = node->children[i];
-                     if (arg->type == AST_VAR_DECL) {
-                         ASTNode* type = arg->children[1]; // Type
-                         // Check for "string args" or "string[] args"
-                         if (strcmp(arg->text, "args")==0) {
-                             if (strcmp(type->text, "string")==0 || strcmp(type->text, "string[]")==0) {
-                                  // Inject come_string_list_from_argv
-                                  emit_indent(f, indent + 4);
-                                  fprintf(f, "come_string_list_t* args = come_string_list_from_argv(come_global_ctx, argc, argv);\n");
-                                  emit_indent(f, indent + 4);
-                                  fprintf(f, "(void)args;\n");
-                             }
-                         }
-                     }
-                 }
-            }
-
             for (int i = 0; i < body->child_count; i++) {
                 generate_node(f, body->children[i], indent + 4);
             }
             
-            if (is_main) {
-                 emit_indent(f, indent + 4);
-                 fprintf(f, "mem_talloc_free(come_global_ctx);\n");
-                 fprintf(f, "return 0;\n"); // ensure return
-            }
-
             fprintf(f, "}\n");
+            
+            // If main, generate the wrapper now
+            if (is_main) {
+                fprintf(f, "\n/* Main Wrapper */\n");
+                fprintf(f, "int main(int argc, char* argv[]) {\n");
+                fprintf(f, "    come_global_ctx = mem_talloc_new_ctx(NULL);\n");
+                
+                // Check if we need to convert args
+                int needs_args = 0;
+                for (int i = 1; i < body_idx; i++) {
+                     ASTNode* arg = node->children[i];
+                     if (arg->type == AST_VAR_DECL && strncmp(arg->text, "args", 4) == 0) {
+                         needs_args = 1;
+                         break;
+                     }
+                }
+                
+                if (needs_args) {
+                    fprintf(f, "    come_string_list_t* args = come_string_list_from_argv(come_global_ctx, argc, argv);\n");
+                    fprintf(f, "    int ret = _come_user_main(args);\n");
+                } else {
+                    fprintf(f, "    int ret = _come_user_main();\n");
+                }
+                
+                fprintf(f, "    mem_talloc_free(come_global_ctx);\n");
+                fprintf(f, "    return ret;\n");
+                fprintf(f, "}\n");
+            }
         } else {
             fprintf(f, ";\n");
         }
@@ -791,6 +841,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
 
         case AST_RETURN: {
+            emit_line_directive(f, node);
             emit_indent(f, indent);
             if (strcmp(current_function_return_type, "void") == 0) {
                  fprintf(f, "return;\n");
@@ -817,6 +868,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 
         
         case AST_STRUCT_DECL: {
+            emit_line_directive(f, node);
             emit_indent(f, indent);
             fprintf(f, "struct %s {\n", node->text);
             for (int i = 0; i < node->child_count; i++) {
@@ -855,7 +907,10 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             }
             fprintf(f, "};\n");
             emit_indent(f, indent);
-            fprintf(f, "typedef struct %s %s;\n", node->text, node->text);
+            if (!is_struct_seen(node->text)) {
+                fprintf(f, "typedef struct %s %s;\n", node->text, node->text);
+                mark_struct_seen(node->text);
+            }
             break;
         }
 
@@ -873,6 +928,41 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 
 
 
+        case AST_CONST_GROUP: {
+            // Check if it's an enum group
+            int is_enum_group = 0;
+            if (node->child_count > 0 && node->children[0]->child_count > 0 && 
+                node->children[0]->children[0]->type == AST_ENUM_DECL) {
+                is_enum_group = 1;
+            }
+
+            if (is_enum_group) {
+                emit_line_directive(f, node);
+                emit_indent(f, indent);
+                fprintf(f, "enum {\n");
+                for (int i = 0; i < node->child_count; i++) {
+                    ASTNode* const_decl = node->children[i];
+                    ASTNode* enum_decl = const_decl->children[0];
+                    emit_indent(f, indent + 4);
+                    fprintf(f, "%s", const_decl->text);
+                    if (enum_decl->child_count > 0 && enum_decl->children[0]->type == AST_NUMBER) {
+                        fprintf(f, " = %s", enum_decl->children[0]->text);
+                        enum_counter = atoi(enum_decl->children[0]->text);
+                    }
+                    enum_counter++;
+                    if (i < node->child_count - 1) fprintf(f, ",");
+                    fprintf(f, "\n");
+                }
+                emit_indent(f, indent);
+                fprintf(f, "};\n");
+            } else {
+                for (int i = 0; i < node->child_count; i++) {
+                    generate_node(f, node->children[i], indent);
+                }
+            }
+            break;
+        }
+
         case AST_CONST_DECL: {
             emit_indent(f, indent);
             if (node->child_count > 0 && node->children[0]->type == AST_ENUM_DECL) {
@@ -888,7 +978,8 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                 
                 fprintf(f, "enum { %s = %d };\n", node->text, val);
             } else {
-                fprintf(f, "const int %s = ", node->text);
+                const char* type = infer_const_type(node->children[0]);
+                fprintf(f, "const %s %s = ", type, node->text);
                 generate_expression(f, node->children[0]);
                 fprintf(f, ";\n");
             }
@@ -958,6 +1049,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
         
         case AST_WHILE: {
+            emit_line_directive(f, node);
             emit_indent(f, indent);
             fprintf(f, "while (");
             generate_expression(f, node->children[0]);
@@ -975,6 +1067,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
         
         case AST_DO_WHILE: {
+            emit_line_directive(f, node);
             emit_indent(f, indent);
             fprintf(f, "do {\n");
              ASTNode* body = node->children[0];
@@ -991,8 +1084,63 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
         
         
+        case AST_CALL:
+        case AST_POST_INC:
+        case AST_POST_DEC:
+        case AST_BINARY_OP:
+        case AST_IDENTIFIER: {
+            emit_line_directive(f, node);
+            emit_indent(f, indent);
+            generate_expression(f, node);
+            fprintf(f, ";\n");
+            break;
+        }
+
         case AST_FOR: {
-            // Not fully implemented in parser yet but...
+            emit_line_directive(f, node);
+            emit_indent(f, indent);
+            fprintf(f, "for (");
+            // children[0]: init
+            if (node->children[0]) {
+                if (node->children[0]->type == AST_VAR_DECL) {
+                    // Variable declaration in for: int i = 0
+                    // generate_node(f, node->children[0], 0); // This adds indent and \n; we need raw.
+                    // Actually let's assume it's common.
+                    ASTNode* decl = node->children[0];
+                    ASTNode* type = decl->children[1];
+                    fprintf(f, "%s %s = ", type->text, decl->text);
+                    generate_expression(f, decl->children[0]);
+                } else {
+                    generate_expression(f, node->children[0]);
+                }
+            }
+            fprintf(f, "; ");
+            
+            // children[1]: cond
+            if (node->children[1]) {
+                generate_expression(f, node->children[1]);
+            }
+            fprintf(f, "; ");
+
+            // children[2]: iter
+            if (node->children[2]) {
+                generate_expression(f, node->children[2]);
+            }
+            fprintf(f, ") ");
+
+            // children[3]: body
+            ASTNode* body = node->children[3];
+            if (body->type == AST_BLOCK) {
+                fprintf(f, "{\n");
+                for (int i = 0; i < body->child_count; i++) {
+                    generate_node(f, body->children[i], indent + 4);
+                }
+                emit_indent(f, indent);
+                fprintf(f, "}\n");
+            } else {
+                fprintf(f, "\n");
+                generate_node(f, body, indent + 4);
+            }
             break;
         }
 
@@ -1002,7 +1150,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
 }
 
 
-int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_file) {
+int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_file, int gen_line_map) {
     FILE* f = fopen(out_file, "w");
     if (!f) return 1;
     
@@ -1011,6 +1159,11 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
     strncpy(src_filename, source_file, sizeof(src_filename) - 1);
     src_filename[sizeof(src_filename) - 1] = '\0';
     source_filename = src_filename;
+    g_gen_line_map = gen_line_map;
+    
+    // Reset seen structs tracker
+    for (int i=0; i<seen_count; i++) free(seen_structs[i]);
+    seen_count = 0;
 
     fprintf(f, "#include <stdio.h>\n");
     fprintf(f, "#include <string.h>\n");
@@ -1070,23 +1223,27 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
         ASTNode* child = ast->children[i];
         if (child->type == AST_TYPE_ALIAS) {
              printf("DEBUG: Generating Alias %s\n", child->text);
-             fprintf(f, "typedef %s %s;\n", child->children[0]->text, child->text);
+             emit_line_directive(f, child);
+             if (!is_struct_seen(child->text)) {
+                 fprintf(f, "typedef %s %s;\n", child->children[0]->text, child->text);
+                 // If it's a struct alias, mark it seen
+                 if (strncmp(child->children[0]->text, "struct ", 7) == 0) {
+                     mark_struct_seen(child->children[0]->text + 7);
+                 }
+                 // Also mark the alias name itself as seen if it's the same or similar
+                 mark_struct_seen(child->text);
+             }
         }
     }
 
     // Pass 0: Forward decls for Structs
-    char* seen_structs[256];
-    int seen_count = 0;
     for (int i = 0; i < ast->child_count; i++) {
         ASTNode* child = ast->children[i];
         if (child->type == AST_STRUCT_DECL) {
-             int found = 0;
-             for (int j=0; j<seen_count; j++) {
-                 if (strcmp(seen_structs[j], child->text) == 0) { found = 1; break; }
-             }
-             if (!found && seen_count < 256) {
+             if (!is_struct_seen(child->text)) {
+                 emit_line_directive(f, child);
                  fprintf(f, "typedef struct %s %s;\n", child->text, child->text);
-                 seen_structs[seen_count++] = child->text;
+                 mark_struct_seen(child->text);
              }
         }
     }

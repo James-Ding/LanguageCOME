@@ -29,6 +29,7 @@ typedef enum {
     AST_NET_TCP_ON,         // conn.on(EVENT) { ... }
     AST_NET_TCP_ADDR,       // net.tcp.Addr(...)
     AST_CONST_DECL,
+    AST_CONST_GROUP,
     AST_ENUM_DECL,
     AST_UNION_DECL,
     AST_SWITCH,
@@ -38,6 +39,8 @@ typedef enum {
     AST_DO_WHILE,
     AST_BINARY_OP,
     AST_UNARY_OP,
+    AST_POST_INC,
+    AST_POST_DEC,
     AST_EXPORT,
     AST_IMPORT,
     AST_TYPE_END

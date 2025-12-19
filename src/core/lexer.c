@@ -136,10 +136,12 @@ int lex_file(const char* filename, TokenList* out) {
             else if(strncmp(p, "-=", 2)==0) { tok.type=TOKEN_MINUS_ASSIGN; strcpy(tok.text,"-="); p+=2; }
             else if(strncmp(p, "*=", 2)==0) { tok.type=TOKEN_STAR_ASSIGN; strcpy(tok.text,"*="); p+=2; }
             else if(strncmp(p, "/=", 2)==0) { tok.type=TOKEN_SLASH_ASSIGN; strcpy(tok.text,"/="); p+=2; }
-            else if(strncmp(p, "%=", 2)==0) { tok.type=TOKEN_AND_ASSIGN; strcpy(tok.text,"%="); p+=2; } // Wait, fix below
+            else if(strncmp(p, "%=", 2)==0) { tok.type=TOKEN_MOD_ASSIGN; strcpy(tok.text,"%="); p+=2; }
             else if(strncmp(p, "&=", 2)==0) { tok.type=TOKEN_AND_ASSIGN; strcpy(tok.text,"&="); p+=2; }
             else if(strncmp(p, "|=", 2)==0) { tok.type=TOKEN_OR_ASSIGN; strcpy(tok.text,"|="); p+=2; }
             else if(strncmp(p, "^=", 2)==0) { tok.type=TOKEN_XOR_ASSIGN; strcpy(tok.text,"^="); p+=2; }
+            else if(strncmp(p, "++", 2)==0) { tok.type=TOKEN_INC; strcpy(tok.text,"++"); p+=2; }
+            else if(strncmp(p, "--", 2)==0) { tok.type=TOKEN_DEC; strcpy(tok.text,"--"); p+=2; }
             
             // Single char ops
             else if(*p=='+'){ tok.type=TOKEN_PLUS; strcpy(tok.text,"+"); p++; }
@@ -156,15 +158,25 @@ int lex_file(const char* filename, TokenList* out) {
             else if(*p=='='){ tok.type=TOKEN_ASSIGN; strcpy(tok.text,"="); p++; }
             
             // Literals
-            else if(isdigit(*p)){ 
+            else if(isdigit(*p)) { 
                 int i=0; 
-                while(isdigit(*p)) tok.text[i++]=*p++; 
-                if(*p=='.' && isdigit(*(p+1))) {
-                    tok.text[i++]=*p++;
-                    while(isdigit(*p)) tok.text[i++]=*p++;
+                if (*p == '0' && (*(p+1) == 'x' || *(p+1) == 'X')) {
+                    tok.text[i++] = *p++; // 0
+                    tok.text[i++] = *p++; // x
+                    while(isxdigit(*p)) tok.text[i++] = *p++;
+                } else {
+                    while(isdigit(*p)) tok.text[i++] = *p++; 
+                    if(*p == '.' && isdigit(*(p+1))) {
+                        tok.text[i++] = *p++;
+                        while(isdigit(*p)) tok.text[i++] = *p++;
+                    }
                 }
-                tok.text[i]='\0'; 
-                tok.type=TOKEN_NUMBER; 
+                // Handle suffixes: L, LL, f, u, etc.
+                while (*p == 'L' || *p == 'f' || *p == 'u' || *p == 'U') {
+                    tok.text[i++] = *p++;
+                }
+                tok.text[i] = '\0'; 
+                tok.type = TOKEN_NUMBER; 
             }
             else if(*p=='"'){ int i=0; tok.text[i++]=*p++; while(*p && *p!='"') tok.text[i++]=*p++; if(*p=='"') tok.text[i++]=*p++; tok.text[i]='\0'; tok.type=TOKEN_STRING_LITERAL; }
             else if(*p=='\''){ int i=0; tok.text[i++]=*p++; while(*p && *p!='\'') tok.text[i++]=*p++; if(*p=='\'') tok.text[i++]=*p++; tok.text[i]='\0'; tok.type=TOKEN_CHAR_LITERAL; } // Changed to CHAR_LITERAL default, distinction handled in parsing?

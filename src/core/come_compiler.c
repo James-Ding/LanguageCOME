@@ -118,11 +118,9 @@ static int run_cmd(const char *fmt, ...) {
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage:\n"
-        "  %s build [-c] [-o <output>] <file.co>\n"
-        "Options:\n"
-        "  -c           Generate C code only (.co.c), do not compile\n"
-        "  -o <output>  Output executable path/name (ignored with -c)\n",
-        prog);
+        "  %s build <file.co> [-o <bin_path>]  - Full build: generate C and link to binary\n"
+        "  %s genc  <file.co> [-o <c_path>]    - Generate C code only\n",
+        prog, prog);
 }
 
 /* ---------- main ---------- */
@@ -130,20 +128,28 @@ static void usage(const char *prog) {
 int main(int argc, char *argv[]) {
     setbuf(stdout, NULL);
     printf("COME compiler starting...\n");
-    if (argc < 3 || strcmp(argv[1], "build") != 0) {
+    if (argc < 3) {
         usage(argv[0]);
         return 1;
     }
 
-    int generate_only = 0;       // -c
-    const char *out_path = NULL; // -o <file>
-    const char *co_file = NULL;
+    const char *cmd = argv[1];
+    int build_mode = 0;
+    if (strcmp(cmd, "build") == 0) {
+        build_mode = 1;
+    } else if (strcmp(cmd, "genc") == 0) {
+        build_mode = 0;
+    } else {
+        usage(argv[0]);
+        return 1;
+    }
 
-    // Parse options: come build [-c] [-o out] file.co
+    const char *co_file = NULL;
+    const char *out_path = NULL;
+
+    // Parse options: come build/genc <file.co> [-o out]
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-c") == 0) {
-            generate_only = 1;
-        } else if (strcmp(argv[i], "-o") == 0) {
+        if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
                 die("Error: -o requires an output path");
             }
@@ -167,54 +173,51 @@ int main(int argc, char *argv[]) {
     char c_file[1024];
     char bin_file[1024];
 
-    // Generated C file: <file>.co.c (same directory as input)
-    snprintf(c_file, sizeof(c_file), "%s.c", co_file);
-
-    // Default binary: remove ".co"
-    if (out_path && !generate_only) {
-        snprintf(bin_file, sizeof(bin_file), "%s", out_path);
+    if (build_mode) {
+        // Build mode: binary path
+        if (out_path) {
+            snprintf(bin_file, sizeof(bin_file), "%s", out_path);
+        } else {
+            snprintf(bin_file, sizeof(bin_file), "%s", co_file);
+            strip_suffix(bin_file, ".co");
+        }
+        // Intermediate C file
+        snprintf(c_file, sizeof(c_file), "%s.c", co_file);
     } else {
-        snprintf(bin_file, sizeof(bin_file), "%s", co_file);
-        strip_suffix(bin_file, ".co"); // from .../foo.co -> .../foo
+        // genc mode: C file path
+        if (out_path) {
+            snprintf(c_file, sizeof(c_file), "%s", out_path);
+        } else {
+            snprintf(c_file, sizeof(c_file), "%s.c", co_file);
+        }
     }
 
-	ASTNode *ast = NULL;
+    ASTNode *ast = NULL;
     printf("Parsing file: %s\n", co_file);
-    fprintf(stderr, "DEBUG: Calling parse_file\n");
-	if (parse_file(co_file, &ast) != 0 || !ast) {
-	    die("Parsing failed: %s", co_file);
-	}
-    fprintf(stderr, "DEBUG: parse_file success. AST child count: %d\n", ast->child_count);
+    if (parse_file(co_file, &ast) != 0 || !ast) {
+        die("Parsing failed: %s", co_file);
+    }
 
-    /* 3) Codegen -> C file */
-    // Ensure directory for c_file exists (same dir as .co; usually does)
-    fprintf(stderr, "DEBUG: Calling generate_c_from_ast\n");
-    if (generate_c_from_ast(ast, c_file, co_file) != 0) {
+    /* Codegen -> C file */
+    if (generate_c_from_ast(ast, c_file, co_file, build_mode) != 0) {
         ast_free(ast);
         die("Code generation failed: %s", c_file);
     }
-    fprintf(stderr, "DEBUG: generate_c_from_ast success\n");
 
-    if (generate_only) {
+    if (!build_mode) {
         printf("Generated C code: %s\n", c_file);
         ast_free(ast);
         return 0;
     }
 
-
-    /* 4) Compile C -> executable */
-    // Ensure directory for output exists if -o specified
+    /* Compile C -> executable */
     if (out_path) {
         mkdir_p_for_file(out_path);
     }
 
-    // Get project root
     char project_root[1024];
     get_project_root(project_root, sizeof(project_root));
-    fprintf(stderr, "DEBUG: Project root: %s\n", project_root);
 
-    // Compile with gcc using absolute paths
-    fprintf(stderr, "DEBUG: Running GCC\n");
     if (run_cmd("gcc -Wall -Wno-cpp -g -D__STDC_WANT_LIB_EXT1__=1 "
                 "-I%s/src/include -I%s/src/core/include -I%s/external/talloc/lib/talloc -I%s/external/talloc/lib/replace "
                 "\"%s\" %s/src/string/string.c %s/src/array/array.c %s/src/mem/talloc.c %s/external/talloc/lib/talloc/talloc.c -o \"%s\" -ldl", 
@@ -223,15 +226,9 @@ int main(int argc, char *argv[]) {
         ast_free(ast);
         die("GCC compilation failed");
     }
-    fprintf(stderr, "DEBUG: GCC success\n");
 
-    /* 5) Cleanup and finish */
-    // Remove intermediate C file to keep tree clean
-    // (If you want to keep it, comment out the line below.)
-    if (remove(c_file) != 0) {
-        // Not fatal; just warn.
-        // fprintf(stderr, "Warning: failed to remove %s\n", c_file);
-    }
+    /* Cleanup intermediate C file */
+    remove(c_file);
 
     ast_free(ast);
     printf("Built executable: %s\n", bin_file);

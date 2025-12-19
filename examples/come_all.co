@@ -12,6 +12,7 @@ import (  // import multiple modules
 )
 
 export (PI, Point, add)
+
 const PI = 3.14
 
 //const enum, also multiple consts
@@ -104,7 +105,7 @@ int demo(void) {
 
     // Array
     int arr[MAX_ARRAY] = {1, 2, 3, 4, 5}
-    int scaled[MAX_ARRAY]
+    int[] scaled = arr
 
     // Struct
     struct Point p1 = { .x = 15, .y = 10 }
@@ -178,12 +179,11 @@ int demo(void) {
 
     dyn.free()  //free all dynamic blocks within dyn include buf
 
-    //string sbuf = std.sprintf("Sum: %d", sum)
-    //std.printf("%s", sbuf)
+    string sbuf = std.sprintf("Sum: %d", sum)
+    std.printf("%s", sbuf)
 
-    //double root = sqrt(16.0)
-
-    std.printf("Debug info: %c %d %d %ld %f %f\n", c1, c2, c3, l, f, d)
+    double root = sqrt(16.0)
+    std.printf("Debug info: %c %d %d %ld %f %f %f %d\n", c1, c2, c3, l, f, d, root, k)
     std.printf("Debug info continue: %d %d %d\n", sum, p1.x, scaled[0])
     return 0
 }
