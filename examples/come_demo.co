@@ -2,7 +2,7 @@ module main // Every source file must specify it's own module
 
 /**
  * Grouped declarations 
- * New in COME: Syntactic symmetry across 4 keywords: const, import, export, alias.
+ * New in come-lang: Syntactic symmetry across these 4 keywords: const, import, export, alias.
  */
 const PI = 3.14
 
@@ -24,14 +24,14 @@ import (std, string) //multi items in one line
 export (
     PI, 
     Point, 
-    add
+    int add(int a, int b) 
 )
 
 // alias: Unified syntax for typedefs and defines
 alias (
     tcpport_t = ushort,           // Alias as typedef
     Point = struct Point,         // Alias as typedef
-    MAX_ARRAY = 5,                // Alias as constant define
+    MAX_ARRAY = 10,               // Alias as constant define
     SQUARE(x) = ((x) * (x))       // Alias as macro define
 )
 
@@ -46,45 +46,48 @@ union TwoBytes {
 }
 
 // Struct: Standard composite type
-struct Point {
-    int x
-    int y
-}
-
-// Struct with networking-style data
-struct TCP_ADDR {
-    tcpport_t portnumber
-    byte ipaddr[16]
+struct Rect {
+    int w
+    int h
 }
 
 /**
- * STRUCT METHODS
- * New in COME: Define behavior directly on structs.
- * 'self' is a new keyword representing the instance pointer.
+ * struct methods
+ * New in come-lang: Define behavior directly on structs.
+ * 'self' is a new keyword representing the instance itself
  */
-byte TCP_ADDR.nport() {
-    return (byte)self.portnumber 
+int Rect.area() {
+    return self.w * self.h 
 }
 
-int main(string args) {
-    struct TCP_ADDR addr
+int main(string args[]) {
+    struct Rect r = { .w = 10, .h  = 5}
 
     /**
-     * HEADERED BUFFER METHODS
-     * New in COME: Strings and arrays are no longer raw pointers.
-     * .length() and .toi() are safe methods provided by the headered model.
+     * New in come-lang: string and array are headed buffer objects.
+     * .length() and .tol() are methods provided by array/string object.
      */
     if (args.length() > 2) {
-        // .toi() is a string method replacing C's atoi()
-        addr.portnumber = (ushort)args[2].toi()
-        
-        // .cpy() replaces memcpy() with a bounds-checked operation
-        addr.ipaddr.cpy(args[1].byte_array())
-    } else {
-        std.out.printf("Usage: %s <ip> <port>\n", args[0])
+        // .tol() is a string method replacing C's strtol()
+        int w = (int) args[1].tol
+        if (ERR.no() > 0) { //ERR is a global object with .no() and .str() method
+            std.err.printf("string %s tol error:%s\n", args[1], ERR.str())
+        } else r.w = w
+
+        int h = (int) args[2].tol
+        if (ERR.no() > 0) {
+            std.err.printf("string %s tol error:%s\n", args[2], ERR.str())
+        } else r.h = h
     }
 
-    return demo()
+    std.out.printf("Rect area: %d\n", r.area())
+
+	demo_types()
+
+	string pass_in = "hello, world"
+    int r = demo(pass_in)
+    std.out.printf("pass_in is [%s] now\n", pass_in
+	return r
 }
 
 // Function prototype
@@ -92,24 +95,48 @@ int add(int a, int b)
 
 void demo_types() {
     // Primitive types
-    byte c1 = 'A'
+    bool flag = true
+    wchar w = '字' //uicode char
+    byte b = 'A'
+	short s = -3
     int i = 42
     long l = 1000L
+    i8 b1 = 'B'
+	i16 s1 = -7
+    i32 i1 = 412
+    i64 l1 = 10000L
+
+    ubyte ub = 'C'
+	ushort us = 9000
+    uint ui = 4230000
+    ulong ul = 10'000'000'000L  // ' can be used as digit separator
+
+    u8 ub1 = 'D'
+	u16 us1 = 9001
+    u32 ui1 = 4230001
+    u64 ul1 = 10'000'000'001L  // ' can be used as digit separator
+
+    float f =3.14
     double d = 2.718
-    bool flag = true
     
-    // 'var' is a new keyword for block-scoped type inference
-    var later_var = PI 
+    // var is a new type keyword
+    // var type is realized on the first assignment
+    var late_var 
+    late_var = s //late_var is a short now
 
     /**
-     * DYNAMIC MEMORY
-     * Arrays are Headered Buffers. .resize() replaces malloc/realloc.
+     * array is for dynamic memory
+     * arrays are Headered Buffers. .resize() replaces malloc/realloc.
      */
-    int arr[MAX_ARRAY] = {1, 2, 3, 4, 5}
-    int scaled[] 
-    scaled.resize(MAX_ARRAY) 
+    int arr[5] = {1, 2, 3, 4, 5}
+    arr.resize(MAX_ARRAY) //adjust array size 
+    for (int j = 5; j < MAX_ARRAY; j++) {
+        arr[j] = j + 1
+    }
 
-    struct Point p1 = { .x = 15, .y = 10 }
+	module_arr = arr
+
+    struct Rect r = { .w = 10, .h = 3 }
     
     union TwoBytes tb
     tb.unsigned_s = 0x1234
@@ -117,12 +144,12 @@ void demo_types() {
     std.out.printf("Types: %c, %d, %f, byte: %d\n", c1, i, d, tb.first_byte)
 }
 
-int demo() {
-    demo_types()
-
+int demo(string pass_ref)  //composite type is always passed by reference
+{
+	pass_ref.upper()
     /**
-     * SWITCH & FALLTHROUGH
-     * 'fallthrough' is a new explicit keyword to allow case bleeding.
+     * switch & fallthrough: defaut is break for switch
+     * 'fallthrough' is a new explicit keyword 
      */
     var color = YELLOW
     switch (color) {
@@ -134,26 +161,35 @@ int demo() {
             std.out.printf("Color code: %d\n", color)
     }
 
-    /**
-     * METADATA AWARENESS
-     * .size() is a new method for O(1) retrieval of array length.
-     */
-    int dyn[]
-    dyn.resize(3) 
-    for (int n = 0; n < dyn.size(); n++) {
-        dyn[n] = n * n
+    int k = 0
+    while (k < 3) { k++; }
+    do { k-- } while (k > 0)
+
+    // Arithmetic, relational, logical, bitwise
+    int x = 5
+    int y = 2
+    int res = (x + y) * (x - y)
+    res &= 7        // bitwise AND
+    res |= 2        // bitwise OR
+    res ^= 1        // bitwise XOR
+    res = ~res      // bitwise NOT
+    res <<= 1       // left shift
+    res >>= 1       // right shift
+
+    alias printf = std.out.printf
+
+    if ((res > 0) && (res != 10)) {
+        printf("res = %d\n", res)
     }
 
+    printf("%d + %d = %d\n", x, y, add(x, y))
     /**
-     * MULTIPLE RETURN VALUES
-     * New in COME: Return and destructure tuples directly.
+     * multiple return values
+     * New in come-lang: Return and destructure tuples directly.
      */
     var (sum, msg) = add_n_compare(10, 20)
-    std.out.printf("%s: %d\n", msg, sum)
+    printf("%s: %d\n", msg, sum)
 
-    // .free() is manual, but auto-called by .exit() at scope end (no leaks!)
-    dyn.free() 
-    
     return 0
 }
 
