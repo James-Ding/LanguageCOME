@@ -1,10 +1,10 @@
-# COME Data Types
+# Come Data Types
 
-The COME language provides a set of fixed-width primitive types and composite types.
+The Come language provides a set of fixed-width primitive types and composite types.
 
 ## Primitive Types
 
-COME provides a set of fixed-width primitive types.
+Come provides a set of fixed-width primitive types.
 
 | Type | Alias | Size (Bytes) | Description |
 | :--- | :--- | :--- | :--- |
@@ -57,7 +57,7 @@ All composite variables automatically possess the following methods. These metho
 
 ## Dynamic Type Inference `var`
 
-COME supports the dynamic placeholder type `var`, which allows variables to be declared without an explicit, concrete type.
+Come supports the dynamic placeholder type `var`, which allows variables to be declared without an explicit, concrete type.
 
 ### Declaration and Realization
 
@@ -92,7 +92,7 @@ lvar = svar.dup()
 
 ### Rules of `var` Type Inference
 
-The `var` keyword provides flexibility in declaration while preserving COME's nature as a **strongly and statically typed language**. The type is determined and locked at the first assignment.
+The `var` keyword provides flexibility in declaration while preserving Come's nature as a **strongly and statically typed language**. The type is determined and locked at the first assignment.
 
 | Rule | Description |
 | :--- | :--- |
@@ -101,7 +101,7 @@ The `var` keyword provides flexibility in declaration while preserving COME's na
 | **No Reassignment of Type** | Attempting to assign a value of a different type (e.g., assigning a `string` to a realized `int`) results in a **compile-time error**.  |
 | **Full Type Support** | Type inference works for all primitive (`int`, `double`, `bool`, etc.) and composite types (`array`, `map`, `struct`). |
 
-### Type Aliases in COME
+### Type Aliases in Come
 ```come
 alias (i8 i16 i32 i64) = (byte short int long)
 alias (u8 u16 u32 u64) = (ubyte ushort uint ulong)
@@ -115,7 +115,7 @@ alias (u8 u16 u32 u64) = (ubyte ushort uint ulong)
 | `var y = [1, 2]` | `y` becomes `int array[]` | `y = [3, 4, 5]` (Allowed) <br> `y = ["a", "b"]` (Error) |
 | `var z` <br> `z = { "a": 1 }` | `z` becomes `map{key:value}` | `z = {}` (Allowed) <br> `z = "map"` (Error) |
 
-This behavior ensures that while declaration is flexible, COME remains a strongly and statically typed language throughout compilation.
+This behavior ensures that while declaration is flexible, Come remains a strongly and statically typed language throughout compilation.
 
 ### Usage Example
 

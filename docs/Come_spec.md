@@ -1,6 +1,6 @@
 # 1. Overview
 
-COME(C Object and Module Extensions) is a systems programming language inspired by C. It preserves C’s mental model while removing common pitfalls.
+Come(C Object and Module Extensions) is a systems programming language inspired by C. It preserves C’s mental model while removing common pitfalls.
 
 Key design goals:
 
@@ -21,7 +21,7 @@ module main
 
 ## 2.1 Comments
 
-COME supports both single-line and multi-line comments.
+Come supports both single-line and multi-line comments.
 
 ```come
 // single-line comment
@@ -155,7 +155,7 @@ Trailing commas are allowed.
 
 ## 4.2 Enumerations
 
-COME uses `enum` as a value generator within `const` blocks.
+Come uses `enum` as a value generator within `const` blocks.
 
 ```come
 const ( RED = enum, YELLOW, GREEN, UNKNOWN )
@@ -245,7 +245,7 @@ union TwoBytes {
 
 ### 6.2.3 Arrays
 
-Arrays in COME are implemented as dynamic headered buffers.
+Arrays in Come are implemented as dynamic headered buffers.
 `[ uint size_in_bytes | uint element_count | element data... ]`
 size_in_bytes includes the header and payload.
 element_count is the number of elements currently stored.
@@ -375,7 +375,7 @@ if (flag) {
 
 ## 10.2 Switch Statement
 
-COME switch does NOT fall through by default.
+Come switch does NOT fall through by default.
 
 ```come
 switch (value) {
@@ -428,7 +428,7 @@ dyn.free()
 
 # 12. Expressions and Operators
 
-COME supports:
+Come supports:
 
 * Arithmetic: `+` `-` `*` `/` `%`
 * Bitwise: `&` `|` `^` `~` `<<` `>>`

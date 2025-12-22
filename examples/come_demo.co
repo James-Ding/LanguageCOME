@@ -2,7 +2,7 @@ module main // Every source file must specify it's own module
 
 /**
  * Grouped declarations 
- * New in come-lang: Syntactic symmetry across these 4 keywords: const, import, export, alias.
+ * New in Come: Syntactic symmetry across these 4 keywords: const, import, export, alias.
  */
 const PI = 3.14
 
@@ -53,7 +53,7 @@ struct Rect {
 
 /**
  * struct methods
- * New in come-lang: Define behavior directly on structs.
+ * New in Come: Define behavior directly on structs.
  * 'self' is a new keyword representing the instance itself
  */
 int Rect.area() {
@@ -64,7 +64,7 @@ int main(string args[]) {
     struct Rect r = { .w = 10, .h  = 5}
 
     /**
-     * New in come-lang: string and array are headed buffer objects.
+     * New in Come: string and array are headed buffer objects.
      * .length() and .tol() are methods provided by array/string object.
      */
     if (args.length() > 2) {
@@ -141,7 +141,12 @@ void demo_types() {
     union TwoBytes tb
     tb.unsigned_s = 0x1234
 
-    std.out.printf("Types: %c, %d, %f, byte: %d\n", c1, i, d, tb.first_byte)
+    std.out.printf("Types: %c, %d, %f, byte: %d\n", b, i, d, tb.first_byte)
+    
+    // Print unused variables to avoid warnings
+    std.out.printf("Unused: %d, %lc, %ld, %d, %d, %d, %ld\n", flag, w, l, b1, s1, i1, l1)
+    std.out.printf("Unused unsigned: %d, %d, %d, %lu, %d, %d, %d, %lu\n", ub, us, ui, ul, ub1, us1, ui1, ul1)
+    std.out.printf("Unused float/var: %f, %d\n", f, late_var)
 }
 
 int demo(string pass_ref)  //composite type is always passed by reference
@@ -185,7 +190,7 @@ int demo(string pass_ref)  //composite type is always passed by reference
     printf("%d + %d = %d\n", x, y, add(x, y))
     /**
      * multiple return values
-     * New in come-lang: Return and destructure tuples directly.
+     * New in Come: Return and destructure tuples directly.
      */
     var (sum, msg) = add_n_compare(10, 20)
     printf("%s: %d\n", msg, sum)

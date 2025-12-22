@@ -1,10 +1,10 @@
-# COME std Module Specification
+ # Come std Module Specification
 
 **Version:** 0.1
 
 ## Overview
 
-The `std` module provides core I/O facilities in COME, replacing C's procedural stdio with object-based APIs. It emphasizes resource safety via ownership, deterministic cleanup, and compiler-enforced guarantees. No manual resource management required, but optional explicit methods available. Leaks are impossible due to auto-cleanup.
+The `std` module provides core I/O facilities in Come, replacing C's procedural stdio with object-based APIs. It emphasizes resource safety via ownership, deterministic cleanup, and compiler-enforced guarantees. No manual resource management required, but optional explicit methods available. Leaks are impossible due to auto-cleanup.
 
 This spec focuses on file/stream I/O (`FILE`) as a complete replacement for C stdio. All character-related methods operate on `wchar` (wide char, Unicode-aware).
 
@@ -205,7 +205,7 @@ FILE temp1 = std.tmpfile()
 
 ## 5. Obsoleted C stdio functions 
 
-| C Function | COME Equivalent |
+| C Function | Come Equivalent |
 |------------|-----------------|
 | `fgetpos` | Use `f.tell()` / `f.seek()` |
 | `fsetpos` | Use `f.seek()` |
@@ -227,7 +227,7 @@ FILE temp1 = std.tmpfile()
 
 ## 5. Other C stdlib functions 
 
-| C Function | COME Equivalent |
+| C Function | Come Equivalent |
 |------------|-----------------|
 | `atof()` | `string.tof()` |
 | `atoi()` | `string.toi()` |
@@ -267,4 +267,4 @@ Example:
 
 ## 8. Summary
 
-`std` provides a complete, safe replacement for C stdio in COME: Objects over functions, Unicode-aware, optional manual control. Familiar for C devs, zero-cost abstractions. Integrates with ownership for leak-proof I/O.
+`std` provides a complete, safe replacement for C stdio in Come: Objects over functions, Unicode-aware, optional manual control. Familiar for C devs, zero-cost abstractions. Integrates with ownership for leak-proof I/O.

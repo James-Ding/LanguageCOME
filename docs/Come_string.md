@@ -1,13 +1,13 @@
-# 📚 COME String Module Reference (vs. C and Go)
+# 📚 Come String Module Reference (vs. C and Go)
 
-This table defines the standard string methods available on the COME `string` object, designed to be instantly recognizable by C programmers while incorporating modern features like object-method style and UTF-8 awareness.
+This table defines the standard string methods available on the Come `string` object, designed to be instantly recognizable by C programmers while incorporating modern features like object-method style and UTF-8 awareness.
 
 ## Memory Model
 Methods that create new strings (like `upper()`, `repeat()`, `replace()`) allocate the new string using the **parent string** as the memory context. This ensures hierarchical memory management: freeing the parent string automatically frees all derived temporary strings.
 
-Any object in COME has a default method `a.chown(b)`, which changes the memory context of `a` to `b`'s context. If a derived string needs to outlive its parent, use `new_str.chown(new_parent)` to move it.
+Any object in Come has a default method `a.chown(b)`, which changes the memory context of `a` to `b`'s context. If a derived string needs to outlive its parent, use `new_str.chown(new_parent)` to move it.
 
-| COME Method | Description | C Equivalent | Go Equivalent |
+| Come Method | Description | C Equivalent | Go Equivalent |
 | :--- | :--- | :--- | :--- |
 | **a.size()** | Returns the number of **bytes** in the string. | *None* | `len(a)` |
 | **a.len()** | Returns the number of **characters**  in the string. | `strlen(a)` | `utf8.RuneCountInString(a)` |
