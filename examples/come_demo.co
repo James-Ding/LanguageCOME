@@ -86,7 +86,7 @@ int main(string args[]) {
 
 	string pass_in = "hello, world"
     int r = demo(pass_in)
-    std.out.printf("pass_in is [%s] now\n", pass_in
+    std.out.printf("pass_in is [%s] now\n", pass_in)
 	return r
 }
 

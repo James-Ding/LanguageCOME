@@ -22,6 +22,13 @@ COME provides a set of fixed-width primitive types.
 | `double` | `f64` | 8 | IEEE 754 Double-precision (64-bit) float. |
 | `void` | N/A | 0 | Indicates no return value or a generic pointer. |
 
+### Numeric Literals
+Numeric literals can use single quotes `'` as digit separators to improve readability.
+
+```come
+long big_num = 10'000'000'000L  // ' used as digit separator
+```
+
 ## Composite Types
 
 Composite types are structures built from other types. 
@@ -31,7 +38,7 @@ Their memory lifetime is managed by **explicit ownership**, tied to the parent c
 |-----------|------------------------|--------------------------------------------------|--------------------------------------------------------------------|
 | `string` | `string name;`         | `string name = "John"`                           | Immutable, UTF-8 encoded sequence of characters.                   |
 | `struct/union` | `MyStruct data;`       | `data = MyStruct{ field: value };`               | Custom aggregated data structure.                                  |
-| `array`  | `T name[];`            | `int numbers[] = [10, 20, 30]`                   | Fixed-size collection. Size inferred from the initializer list `[]`. |
+| `array`  | `T name[];`            | `int numbers[] = [10, 20, 30]`                   | Always dynamic. Fixed-size declarations are promoted to dynamic on assignment, resize, or ownership transfer. |
 | `map`    | `map map_name{};`      | `map students = { "name" : "John", "age" : 16 }` | Unordered key-value collection using `{}` for initialization.       |
 | `module` | *N/A*                  | *N/A*                                            | The top-level execution scope and lifetime container.               |
 
@@ -96,9 +103,8 @@ The `var` keyword provides flexibility in declaration while preserving COME's na
 
 ### Type Aliases in COME
 ```come
+alias (i8 i16 i32 i64) = (byte short int long)
 alias (u8 u16 u32 u64) = (ubyte ushort uint ulong)
-alias i64 = long
-alias u64 = ulong
 ```
 
 ### Examples
@@ -133,12 +139,12 @@ import std
 int main(string args[]) {
     // Check array length
     if (args.length() > 0) {
-        std.printf("First argument: %s\n", args[0])
+        std.out.printf("First argument: %s\n", args[0])
     }
 
     // Array of integers
     int numbers[] = [1, 2, 3, 4, 5]
-    std.printf("Count: %d\n", numbers.length())
+    std.out.printf("Count: %d\n", numbers.length())
 
     return 0
 }

@@ -128,7 +128,7 @@ import (
 Imported modules are referenced using dot notation:
 
 ```come
-std.printf("hello")
+std.out.printf("hello")
 net.hton(port)
 ```
 
@@ -245,27 +245,29 @@ union TwoBytes {
 
 ### 6.2.3 Arrays
 
-**Static Array**
+Arrays in COME are implemented as dynamic headered buffers.
+`[ uint size_in_bytes | uint element_count | element data... ]`
+size_in_bytes includes the header and payload.
+element_count is the number of elements currently stored.
+Elements are stored contiguously in memory.
 
 ```come
-int arr[10]
+int arr[10]       // Initially allocated with fixed size
+int dyn[]         // Initially empty dynamic array
 ```
 
-* Size known at compile time
-* Automatically freed
-* `.free()` is not allowed
+**Dynamic Promotion**
 
-**Dynamic Array**
+A fixed-size array may be promoted to a fully dynamic array and relocated into the current memory arena when required.
+Dynamic promotion occurs under the following conditions:
+1. The array is assigned to another array variable.
+2. The array is passed as a function argument.
+3. The .resize(n) method is invoked.
+4. The .chown() method is invoked.
 
-```come
-int dyn[]
-dyn.resize(3)
-dyn.free()
-```
-
-* Allocated at runtime
-* Requires explicit `.free()`
-* Ownership-aware
+Promotion is transparent to the programmer.
+The compiler guarantees array validity across promotions.
+Memory ownership follows the active arena and ownership rules.
 
 # 7. Methods and Ownership
 
@@ -378,13 +380,13 @@ COME switch does NOT fall through by default.
 ```come
 switch (value) {
     case RED:
-        std.printf("Red\n")
+        std.out.printf("Red\n")
     case GREEN:
-        std.printf("Green\n")
+        std.out.printf("Green\n")
     case UNKNOWN:
         fallthrough
     default:
-        std.printf("UNKNOWN\n")
+        std.out.printf("UNKNOWN\n")
 }
 ```
 

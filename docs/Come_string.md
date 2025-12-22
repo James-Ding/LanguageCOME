@@ -39,6 +39,8 @@ Any object in COME has a default method `a.chown(b)`, which changes the memory c
 | **a.regex_split(pattern[, n])** | Splits the string by regex `pattern` into a list of strings. If `n` is provided, splits into at most `n` parts; otherwise splits all occurrences. | `regexec()` + manual split | `regexp.Split(a, n)` |
 | **a.regex_groups(pattern)** | Returns a list of capture groups from the first match of `pattern`. Returns empty list if no match. | `regexec()` + `regmatch_t` | `regexp.FindStringSubmatch(a)` |
 | **a.regex_replace(pattern, repl[, count])** | Replaces matches of `pattern` with `repl`. If `count` is provided, replaces at most `count` occurrences; otherwise replaces all. | `regsub()` / `regexec()` | `regexp.ReplaceAllString(a, repl)` (custom loop for `count`) |
+| **a.tol([base])** | Parses string as a signed 64-bit integer. Optional `base` (0, 2-36). Default is 10 (or auto-detect if 0). | `strtoll(a, ...)` | `strconv.ParseInt(a, base, 64)` |
+| **a.tod()** | Parses string as a 64-bit floating point number. | `strtod(a, ...)` | `strconv.ParseFloat(a, 64)` |
 | `string sprintf(string fmt, ...)` | Format string with arguments. |
 | **int sscanf(string str, string fmt, ...)** | Parse formatted input from string. |
 | **string vsprintf(string fmt, va_list args)** | Format string with va_list. |
