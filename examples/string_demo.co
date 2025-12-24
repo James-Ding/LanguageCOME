@@ -11,7 +11,7 @@ int main(string args[])
 
     // 1. Basic Info
     print("Size (bytes): %u\n", s.size())
-    print("Len (chars): %u\n", s.len())
+    print("Len (chars): %zu\n", s.len())
     print("Is ASCII: %t\n", s.isascii())
 
     // 2. Comparison
@@ -34,7 +34,7 @@ int main(string args[])
     // 3. Search
     print("Find 'World': %ld\n", s.find("World"))
     print("RFind 'l': %ld\n", s.rfind("l"))
-    print("Count 'l': %ld\n", s.count("l"))
+    print("Count 'l': %zu\n", s.count("l"))
     
     // Character search
     print("Chr 'e': %ld\n", s.chr('e'))

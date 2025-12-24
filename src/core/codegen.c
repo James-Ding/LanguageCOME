@@ -127,6 +127,15 @@ static void generate_expression(FILE* f, ASTNode* node) {
     } else if (node->type == AST_BOOL_LITERAL) {
         fprintf(f, "%s", node->text); // true or false
     } else if (node->type == AST_NUMBER) {
+        if (node->text[0] == '\'') {
+            // Check for multi-byte char
+            int len = strlen(node->text);
+            int is_multibyte = 0;
+            for (int i=1; i<len-1; i++) {
+                if ((unsigned char)node->text[i] >= 0x80) { is_multibyte = 1; break; }
+            }
+            if (is_multibyte) fprintf(f, "L");
+        }
         fprintf(f, "%s", node->text);
     } else if (node->type == AST_IDENTIFIER) {
         fprintf(f, "%s", node->text);
@@ -180,7 +189,7 @@ static void generate_expression(FILE* f, ASTNode* node) {
         }
     } else if (node->type == AST_METHOD_CALL) {
         char* method = node->text;
-        char c_func[8192];
+        char c_func[16384];
         int skip_receiver = 0;
         ASTNode* receiver = node->children[0];
         
@@ -218,10 +227,10 @@ static void generate_expression(FILE* f, ASTNode* node) {
         else if (receiver->type == AST_MEMBER_ACCESS && 
                  strcmp(receiver->children[0]->text, "std") == 0) {
             
-             if (strcmp(receiver->text, "out") == 0 && strcmp(method, "printf") == 0) {
+             if ((strcmp(receiver->text, "out") == 0 || strcmp(receiver->text, "err") == 0) && strcmp(method, "printf") == 0) {
                  strcpy(c_func, "fprintf");
-                 // Need to inject 'stdout' as first arg
-                 fprintf(f, "fprintf(stdout, ");
+                 if (strcmp(receiver->text, "out") == 0) fprintf(f, "fprintf(stdout, ");
+                 else fprintf(f, "fprintf(stderr, ");
                  skip_receiver = 1;
                  // Loop args
                  char* fmt_modified = NULL;
@@ -315,13 +324,13 @@ static void generate_expression(FILE* f, ASTNode* node) {
                          const char* str_methods[] = {"upper", "lower", "repeat", "replace", "trim", "ltrim", "rtrim", "substr", "join", "new", "str", "error"};
                          const char* method_name = (arg->type == AST_METHOD_CALL) ? arg->text : arg->text; // Simplification
                          for(int k=0; k<sizeof(str_methods)/sizeof(char*); k++) {
-                             if (strcmp(method_name, str_methods[k]) == 0) is_str = 1;
+                             if (strcmp(method_name, str_methods[k]) == 0) { is_str = 1; if (arg->child_count > 0 && arg->children[0]->type == AST_IDENTIFIER && strcmp(arg->children[0]->text, "ERR") == 0) is_str = 0; }
                          }
                      } else if (arg->type == AST_ARRAY_ACCESS) {
                          // parts[0], groups[1] etc assuming array of strings
                          ASTNode* arr = arg->children[0];
                          if (arr->type == AST_IDENTIFIER) {
-                              if (strcmp(arr->text, "parts")==0 || strcmp(arr->text, "groups")==0 || strcmp(arr->text, "regex_parts")==0) {
+                              if (strcmp(arr->text, "parts")==0 || strcmp(arr->text, "groups")==0 || strcmp(arr->text, "regex_parts")==0 || strcmp(arr->text, "args")==0) {
                                   is_str = 1;
                               }
                          }
@@ -340,32 +349,6 @@ static void generate_expression(FILE* f, ASTNode* node) {
                          generate_expression(f, arg);
                      }
 
-                 }
-                 fprintf(f, ")");
-                 return;
-             } else if (strcmp(receiver->text, "err") == 0 && strcmp(method, "printf") == 0) {
-                 strcpy(c_func, "fprintf");
-                 // Need to inject 'stderr' as first arg
-                 fprintf(f, "fprintf(stderr, ");
-                 skip_receiver = 1;
-                  // Loop args
-                 for (int i = 1; i < node->child_count; i++) {
-                     if (i > 1) fprintf(f, ", ");
-                     ASTNode* arg = node->children[i];
-                     if (arg->type == AST_IDENTIFIER) {
-                         const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in"};
-                         int is_str = 0;
-                         for(int k=0; k<sizeof(str_vars)/sizeof(char*); k++) {
-                             if (strcmp(arg->text, str_vars[k]) == 0) is_str = 1;
-                         }
-                         if (is_str) {
-                             fprintf(f, "(%s ? %s->data : \"NULL\")", arg->text, arg->text);
-                         } else {
-                             generate_expression(f, arg);
-                         }
-                     } else {
-                         generate_expression(f, arg);
-                     }
                  }
                  fprintf(f, ")");
                  return;
@@ -884,6 +867,10 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             
             for (int i = 0; i < body->child_count; i++) {
                 generate_node(f, body->children[i], indent + 4);
+            }
+            if (is_main) {
+                emit_indent(f, indent + 4);
+                fprintf(f, "return 0;\n");
             }
             emit_indent(f, indent);
             fprintf(f, "}\n");
@@ -1485,7 +1472,7 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
     fprintf(f, "#include \"mem/talloc.h\"\n");
     fprintf(f, "#include <errno.h>\n");
     fprintf(f, "#define come_errno_wrapper() (errno)\n");
-    fprintf(f, "static const char* come_strerror() { return strerror(errno); }\n");
+    fprintf(f, "static __attribute__((unused)) const char* come_strerror() { return strerror(errno); }\n");
     // Auto-include headers for simple modules detection
     // In a real compiler this would be driven by the symbol table/imports
     fprintf(f, "#include \"net/tls.h\"\n");
@@ -1511,8 +1498,8 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
             ASTNode* child = ast->children[i];
             if (child && child->type == AST_FUNCTION && strcmp(child->text, "main") == 0) {
                 // Check if main has any arguments
-                // Arguments are in children[1] if present
-                if (child->child_count > 1 && child->children[1]) {
+                // Arguments are in children[1] if present and NOT a block
+                if (child->child_count > 1 && child->children[1] && child->children[1]->type != AST_BLOCK) {
                     ASTNode* args_node = child->children[1];
                     if (args_node->child_count > 0) {
                         main_has_params = 1;

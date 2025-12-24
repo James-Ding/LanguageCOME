@@ -657,6 +657,6 @@ come_string_t* come_string_at(const come_string_t* a, size_t index) {
 }
 
 long come_string_tol(const come_string_t* a) {
-    if (!a || !a->data) return 0;
+    if (!a) return 0;
     return strtol(a->data, NULL, 10);
 }
