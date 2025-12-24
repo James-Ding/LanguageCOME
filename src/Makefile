@@ -12,4 +12,8 @@ TARGET := $(BUILD_DIR)/come
 $(TARGET): $(SUB_MAKE_DIRS)
 	$(CC) $(CFLAGS) -o $@ $(wildcard $(BUILD_DIR)/*.o)
 
-all: $(SUB_MAKE_DIRS) $(TARGET)
+# Build std module (requires come compiler)
+std: $(TARGET)
+	$(MAKE) -C std
+
+all: $(SUB_MAKE_DIRS) $(TARGET) std

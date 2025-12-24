@@ -75,6 +75,8 @@ int lex_file(const char* filename, TokenList* out) {
             else if(MATCH_KEYWORD("return", TOKEN_RETURN)) { tok.type=TOKEN_RETURN; strcpy(tok.text,"return"); p+=6; }
             else if(MATCH_KEYWORD("if", TOKEN_IF)) { tok.type=TOKEN_IF; strcpy(tok.text,"if"); p+=2; }
             else if(MATCH_KEYWORD("else", TOKEN_ELSE)) { tok.type=TOKEN_ELSE; strcpy(tok.text,"else"); p+=4; }
+            else if(MATCH_KEYWORD("break", TOKEN_BREAK)) { tok.type=TOKEN_BREAK; strcpy(tok.text,"break"); p+=5; }
+            else if(MATCH_KEYWORD("continue", TOKEN_CONTINUE)) { tok.type=TOKEN_CONTINUE; strcpy(tok.text,"continue"); p+=8; }
             
             // Types
             else if(MATCH_KEYWORD("int", TOKEN_INT)) { tok.type=TOKEN_INT; strcpy(tok.text,"int"); p+=3; }
@@ -106,7 +108,6 @@ int lex_file(const char* filename, TokenList* out) {
             else if(MATCH_KEYWORD("true", TOKEN_TRUE)) { tok.type=TOKEN_TRUE; strcpy(tok.text,"true"); p+=4; }
             else if(MATCH_KEYWORD("false", TOKEN_FALSE)) { tok.type=TOKEN_FALSE; strcpy(tok.text,"false"); p+=5; }
             
-            else if(MATCH_KEYWORD("std.printf", TOKEN_PRINTF)) { tok.type=TOKEN_PRINTF; strcpy(tok.text,"printf"); p+=10; }
             
             // Symbols
             else if(*p=='('){ tok.type=TOKEN_LPAREN; strcpy(tok.text,"("); p++; }
@@ -165,10 +166,16 @@ int lex_file(const char* filename, TokenList* out) {
                     tok.text[i++] = *p++; // x
                     while(isxdigit(*p)) tok.text[i++] = *p++;
                 } else {
-                    while(isdigit(*p)) tok.text[i++] = *p++; 
+                    while(isdigit(*p) || *p == '\'') {
+                        if (*p != '\'') tok.text[i++] = *p; 
+                        p++;
+                    }
                     if(*p == '.' && isdigit(*(p+1))) {
                         tok.text[i++] = *p++;
-                        while(isdigit(*p)) tok.text[i++] = *p++;
+                        while(isdigit(*p) || *p == '\'') {
+                             if (*p != '\'') tok.text[i++] = *p;
+                             p++;
+                        }
                     }
                 }
                 // Handle suffixes: L, LL, f, u, etc.

@@ -4,8 +4,53 @@
 #include "parser.h"
 #include "lexer.h"
 
+// Forward declarations
+static void parse_top_level_decl(ASTNode* program);
+static int is_type_token(TokenType type);
+
 static TokenList tokens;
 static int pos;
+
+// Alias Storage
+typedef struct {
+    char name[256];
+    ASTNode* replacement;
+} AliasEntry;
+
+#define MAX_ALIASES 1024
+static AliasEntry alias_table[MAX_ALIASES];
+static int alias_count = 0;
+
+static void register_alias(const char* name, ASTNode* replacement) {
+    if (alias_count < MAX_ALIASES) {
+        strcpy(alias_table[alias_count].name, name);
+        alias_table[alias_count].replacement = replacement;
+        alias_count++;
+    } else {
+        printf("Error: Too many aliases defined\n");
+    }
+}
+
+static ASTNode* find_alias(const char* name) {
+    for (int i = 0; i < alias_count; i++) {
+        if (strcmp(alias_table[i].name, name) == 0) {
+            return alias_table[i].replacement;
+        }
+    }
+    return NULL;
+}
+
+static ASTNode* ast_clone(ASTNode* node) {
+    if (!node) return NULL;
+    ASTNode* copy = ast_new(node->type);
+    strcpy(copy->text, node->text);
+    copy->source_line = node->source_line;
+    copy->child_count = node->child_count;
+    for (int i = 0; i < node->child_count; i++) {
+        copy->children[i] = ast_clone(node->children[i]);
+    }
+    return copy;
+}
 
 static Token* current() {
     if (pos >= tokens.count) return &tokens.tokens[tokens.count-1];
@@ -50,186 +95,59 @@ void ast_free(ASTNode* node) {
 static ASTNode* parse_block();
 static ASTNode* parse_statement();
 static ASTNode* parse_expression();
-
-static int get_precedence(TokenType type) {
-    switch (type) {
-        case TOKEN_LOGIC_OR: return 1;
-        case TOKEN_LOGIC_AND: return 2;
-        case TOKEN_EQ: case TOKEN_NEQ: return 3;
-        case TOKEN_LT: case TOKEN_GT: case TOKEN_LE: case TOKEN_GE: return 4;
-        case TOKEN_PLUS: case TOKEN_MINUS: return 5;
-        case TOKEN_STAR: case TOKEN_SLASH: case TOKEN_PERCENT: return 6;
-        default: return 0;
-    }
-}
-
+static ASTNode* parse_var_decl();
 static ASTNode* parse_primary() {
     ASTNode* node = NULL;
     Token* t = current();
     
-    // Handle NOT operators (logical and bitwise)
-    if (t->type == TOKEN_NOT || t->type == TOKEN_TILDE) {
-        TokenType op_type = t->type;  // Save before advancing
+    // Handle Unary Ops that are often parsed at primary level in simple parsers, 
+    // though conceptually in expression_prec.
+    // In this parser, `parse_expression_prec` calls `parse_primary`.
+    // Unary ops like !, ~, * are handled here?
+    // Snippet 159 showed NOT, TILDE, STAR handling at TOP of parse_primary!
+    // I must preserve that.
+    if (t->type == TOKEN_NOT || t->type == TOKEN_TILDE || t->type == TOKEN_STAR) {
+        TokenType op_type = t->type; 
         advance();
-        ASTNode* not_node = ast_new(AST_UNARY_OP);
-        strcpy(not_node->text, (op_type == TOKEN_NOT) ? "!" : "~");
-        not_node->children[not_node->child_count++] = parse_primary();
-        return not_node;
+        ASTNode* operand = parse_primary(); // Recursive for **x
+        ASTNode* unary = ast_new(AST_UNARY_OP);
+        if (op_type == TOKEN_NOT) strcpy(unary->text, "!");
+        else if (op_type == TOKEN_TILDE) strcpy(unary->text, "~");
+        else if (op_type == TOKEN_STAR) strcpy(unary->text, "*");
+        unary->children[unary->child_count++] = operand;
+        // Unary ops usually bind tight, but postfix binds tighter.
+        // If I return here, I miss postfix on the result?
+        // e.g. (*x).y
+        // Standard C: *x.y means *(x.y) because . binds tighter than *.
+        // So `parse_primary` should NOT loop for unary result?
+        // Correct. *x.y: Postfix loop consumes x then .y. Then * is applied.
+        // Wait, if I implement unary inside parse_primary, then I return `Unary(Recursive)`.
+        // The recursive call consumes `x.y`.
+        // So `*` applies to `x.y`. Correct.
+        // So Unary case returns IMMEDIATELY.
+        return unary;
     }
-    
+
+    // 1. Parse Atom
     if (t->type == TOKEN_IDENTIFIER) {
-        node = ast_new(AST_IDENTIFIER);
-        strcpy(node->text, t->text);
-        advance();
-        
-        // Check for postfix operations: member access, method call, array access, function call
-        while (1) {
-            if (match(TOKEN_DOT)) {
-                Token* member = current();
-                if (expect(TOKEN_IDENTIFIER)) {
-                    if (match(TOKEN_LPAREN)) {
-                        // Method Call
-                        ASTNode* call = ast_new(AST_METHOD_CALL);
-                        call->children[call->child_count++] = node;
-                        strcpy(call->text, member->text);
-                        
-                        while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
-                            call->children[call->child_count++] = parse_expression();
-                            if (!match(TOKEN_COMMA)) break;
-                        }
-                        expect(TOKEN_RPAREN);
-                        // Trailing closure support
-                        if (current()->type == TOKEN_LBRACE) {
-                             call->children[call->child_count++] = parse_block();    
-                        }
-                        node = call;
-                    } else {
-                        // Member Access
-                        ASTNode* access = ast_new(AST_MEMBER_ACCESS);
-                        access->children[access->child_count++] = node;
-                        strcpy(access->text, member->text);
-                        node = access;
-                    }
-                }
-            }
-            // Handle function call: ident(...)
-            else if (match(TOKEN_LPAREN)) {
-                ASTNode* call = ast_new(AST_CALL);
-                strcpy(call->text, node->text); // Use previous node text as name if simple ident?
-                // Wait, if node is not simple ident, this AST_CALL structure might be insufficient if it assumes text name.
-                // Existing AST_CALL relies on text name for function?
-                // If node is expression (arr[0]()), AST_CALL logic in codegen says: "fprintf(f, "%s(", node->text);"
-                // So it assumes text is function name.
-                // This means indirect calls are not fully supported by AST/codegen yet?
-                // But ident(...) uses AST_CALL.
-                // If I have `ident.field(...)`, it is AST_CALL? No, that's not valid syntax unless `field` is function pointer.
-                // But `ident.method(...)` is AST_METHOD_CALL.
-                // Let's preserve existing logic: if Identifier(...) -> Call. 
-                // If I chain `ident[0](...)`, logic breaks if AST_CALL expects name.
-                // For now, I'll stick to basic chaining.
-                // Use "call" as text if complex? Or keep node text?
-                // Let's assume chaining calls is rare or handled elsewhere.
-                // But `ident(...)` in the loop:
-                // If first loop iteration (node is IDENTIFIER): works.
-                // If second iteration (node is Access): `arr[0](...)`.
-                // Codegen for AST_CALL prints `node->text` + parens.
-                // If `node` is Access, `node->text` might be empty or partial.
-                // But standard C call is `expr(...)`.
-                // My Codegen requires rewrite for generic call?
-                // Line 288 codegen: `fprintf(f, "%s(", node->text);`
-                // Yes, it assumes name.
-                // So indirect calls are broken in codegen. 
-                // But `examples/come_all.co` uses straightforward calls.
-                // `args[1].byte_array()` is `MethodCall` on `ArrayAccess`. Codegen handles this (MethodCall uses children[0] as receiver).
-                // So MethodCall works fine.
-                // FunctionCall `ident(...)` works fine.
-                // Indirect call not needed for this fix.
-                
-                // However, I need to put `AST_CALL` logic here correctly.
-                // If I wrap `node` in `AST_CALL`, `node` becomes child?
-                // Existing logic: `strcpy(call->text, node->text); free(node); node = call;`
-                // It DISCARDS the identifier node and uses text!
-                // This implies `ident(...)` is special.
-                // If I have `arr[0](...)`, `node` is `arr[0]` (Access).
-                // I cannot discard it.
-                // But for now, let's allow it only if `node` is Identifier? 
-                // Or just keep logic but warn/fix if complex.
-                // Given `come_all.co` doesn't do indirect calls, I will reuse the logic but only applies to Identifier effectively?
-                // But wait, `add_n_compare(i, s)` is a call.
-                // `ident` is parsed. Loop starts.
-                // PAREN matches.
-                // `node` is IDENTIFIER `add_n_compare`.
-                // We create `AST_CALL`, copy text "add_n_compare", free `node`.
-                // THIS WORKS.
-                // So logic is fine for direct calls.
-                
-                if (node->type == AST_IDENTIFIER) {
-                     ASTNode* call = ast_new(AST_CALL);
-                     strcpy(call->text, node->text);
-                     free(node); 
-                     node = call;
-                     
-                     while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
-                         node->children[node->child_count++] = parse_expression();
-                         if (!match(TOKEN_COMMA)) break;
-                     }
-                     expect(TOKEN_RPAREN);
-                } else {
-                     // Error or generic call?
-                     // For now just error or skip to avoid complex refactor.
-                     // But we must consume parens.
-                     printf("Indirect call not supported yet\n");
-                     expect(TOKEN_RPAREN); // consume
-                }
-            }
-            
-            // Handle array access: ident[expr]
-            else if (match(TOKEN_LBRACKET)) {
-                ASTNode* index = parse_expression();
-                expect(TOKEN_RBRACKET);
-                
-                ASTNode* access = ast_new(AST_ARRAY_ACCESS);
-                access->children[access->child_count++] = node; // Array
-                access->children[access->child_count++] = index; // Index
-                node = access;
-            } else if (match(TOKEN_INC)) {
-                ASTNode* inc = ast_new(AST_POST_INC);
-                inc->children[inc->child_count++] = node;
-                node = inc;
-            } else if (match(TOKEN_DEC)) {
-                ASTNode* dec = ast_new(AST_POST_DEC);
-                dec->children[dec->child_count++] = node;
-                node = dec;
-            } else {
-                break;
-            }
-        }
+         // Check alias substitution
+         ASTNode* alias_node = find_alias(t->text);
+         if (alias_node) {
+             node = ast_clone(alias_node);
+             advance(); // Consume the alias identifier
+         } else {
+             node = ast_new(AST_IDENTIFIER);
+             strcpy(node->text, t->text);
+             advance();
+         }
     } else if (t->type == TOKEN_STRING_LITERAL) {
         node = ast_new(AST_STRING_LITERAL);
-        char combined[4096] = ""; // Large buffer for concatenated strings
+        char combined[4096] = ""; 
         while (current()->type == TOKEN_STRING_LITERAL) {
              strcat(combined, current()->text);
              advance();
         }
         strcpy(node->text, combined);
-        
-        // Handle method call on string literal: "foo" "bar".method()
-        if (match(TOKEN_DOT)) {
-            Token* method = current();
-            if (expect(TOKEN_IDENTIFIER)) {
-                ASTNode* call = ast_new(AST_METHOD_CALL);
-                call->children[call->child_count++] = node;
-                strcpy(call->text, method->text);
-                
-                expect(TOKEN_LPAREN);
-                while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
-                    call->children[call->child_count++] = parse_expression();
-                    if (!match(TOKEN_COMMA)) break;
-                }
-                expect(TOKEN_RPAREN);
-                node = call;
-            }
-        }
     } else if (t->type == TOKEN_TRUE || t->type == TOKEN_FALSE) {
         node = ast_new(AST_BOOL_LITERAL);
         strcpy(node->text, t->text);
@@ -252,28 +170,20 @@ static ASTNode* parse_primary() {
         }
         expect(TOKEN_RBRACKET);
     } else if (match(TOKEN_LBRACE)) {
-        // Map/Struct initializer: { k: v, ... } or { } or { .field = val, ... }
+        // Map/Struct initializer: { k: v, ... } or { .field = val, ... }
         node = ast_new(AST_AGGREGATE_INIT);
         strcpy(node->text, "MAP");
         while (current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
-             // Check for designated initializer: .field = value
              if (match(TOKEN_DOT)) {
                  if (current()->type == TOKEN_IDENTIFIER) {
-                     // Create a special marker node for designated initializer
                      ASTNode* desig = ast_new(AST_IDENTIFIER);
-                     // Store ".field" as text - limit to 126 chars to leave room for "." and null
                      snprintf(desig->text, sizeof(desig->text), ".%.*s", 126, current()->text);
-                     advance(); // consume identifier
-                     
+                     advance(); 
                      if (match(TOKEN_ASSIGN)) {
-                         // Now parse the value
                          ASTNode* value = parse_expression();
-                         
-                         // Create an assignment-like node to represent .field = value
                          ASTNode* pair = ast_new(AST_ASSIGN);
                          pair->children[pair->child_count++] = desig;
                          pair->children[pair->child_count++] = value;
-                         
                          node->children[node->child_count++] = pair;
                      }
                  }
@@ -287,8 +197,107 @@ static ASTNode* parse_primary() {
         node = parse_expression();
         expect(TOKEN_RPAREN);
     }
+
+    if (!node) return NULL;
+
+    // 2. Postfix Loop (Member access, Call, Array, PostInc/Dec)
+    while (1) {
+        if (match(TOKEN_DOT)) {
+            // Member Access or Method Call
+            Token* member = current();
+            if (expect(TOKEN_IDENTIFIER)) {
+                if (match(TOKEN_LPAREN)) {
+                    // Method Call: .ident(...)
+                    ASTNode* call = ast_new(AST_METHOD_CALL);
+                    call->children[call->child_count++] = node; // Receiver
+                    strcpy(call->text, member->text);
+                    
+                    while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
+                        call->children[call->child_count++] = parse_expression();
+                        if (!match(TOKEN_COMMA)) break;
+                    }
+                    expect(TOKEN_RPAREN);
+                    
+                    // Trailing closure
+                    if (current()->type == TOKEN_LBRACE) {
+                        call->children[call->child_count++] = parse_block();    
+                    }
+                    node = call;
+                } else {
+                    // Member Access: .ident
+                    ASTNode* access = ast_new(AST_MEMBER_ACCESS);
+                    access->children[access->child_count++] = node;
+                    strcpy(access->text, member->text);
+                    node = access;
+                }
+            }
+        } else if (match(TOKEN_LBRACKET)) {
+            ASTNode* index = parse_expression();
+            expect(TOKEN_RBRACKET);
+            ASTNode* access = ast_new(AST_ARRAY_ACCESS);
+            access->children[access->child_count++] = node; 
+            access->children[access->child_count++] = index; 
+            node = access;
+        } else if (match(TOKEN_LPAREN)) {
+            // Function Call: expr(...)   (e.g. func(), arr[0]())
+            
+            if (node->type == AST_IDENTIFIER) {
+                 ASTNode* call = ast_new(AST_CALL);
+                 strcpy(call->text, node->text);
+                 free(node); 
+                 node = call;
+                 
+                 while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
+                     node->children[node->child_count++] = parse_expression();
+                     if (!match(TOKEN_COMMA)) break;
+                 }
+                 expect(TOKEN_RPAREN);
+            } else if (node->type == AST_MEMBER_ACCESS) {
+                 // Convert Member Access + Call -> Method Call (Alias Substitution case)
+                 ASTNode* receiver = node->children[0];
+                 ASTNode* call = ast_new(AST_METHOD_CALL);
+                 strcpy(call->text, node->text); // Method name from member access
+                 call->children[call->child_count++] = receiver;
+                 free(node);
+                 node = call;
+
+                 while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
+                     node->children[node->child_count++] = parse_expression();
+                     if (!match(TOKEN_COMMA)) break;
+                 }
+                 expect(TOKEN_RPAREN);
+            } else {
+                 printf("Error: Indirect call not supported on this node type\n");
+                 // consume parens to avoid cascade error
+                 while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) advance();
+                 expect(TOKEN_RPAREN);
+            }
+        } else if (match(TOKEN_INC)) {
+            ASTNode* inc = ast_new(AST_POST_INC);
+            inc->children[inc->child_count++] = node;
+            node = inc;
+        } else if (match(TOKEN_DEC)) {
+            ASTNode* dec = ast_new(AST_POST_DEC);
+            dec->children[dec->child_count++] = node;
+            node = dec;
+        } else {
+            break;
+        }
+    }
     
     return node;
+}
+
+static int get_precedence(TokenType type) {
+    switch (type) {
+        case TOKEN_LOGIC_OR: return 1;
+        case TOKEN_LOGIC_AND: return 2;
+        case TOKEN_EQ: case TOKEN_NEQ: return 3;
+        case TOKEN_LT: case TOKEN_GT: case TOKEN_LE: case TOKEN_GE: return 4;
+        case TOKEN_PLUS: case TOKEN_MINUS: return 5;
+        case TOKEN_STAR: case TOKEN_SLASH: case TOKEN_PERCENT: return 6;
+        default: return 0;
+    }
 }
 
 static ASTNode* parse_expression_prec(int min_prec) {
@@ -319,683 +328,532 @@ static ASTNode* parse_expression() {
     return parse_expression_prec(0);
 }
 
+static ASTNode* parse_var_decl() {
+    Token* t = current();
+    char type_name[128];
+    strcpy(type_name, t->text);
+    advance();
+    
+    // Special handling for struct/union: "struct Type varname" or "union Type varname"
+    if ((strcmp(type_name, "struct") == 0 || strcmp(type_name, "union") == 0) && current()->type == TOKEN_IDENTIFIER) {
+        // Consume the type name
+        strcat(type_name, " ");
+        strcat(type_name, current()->text);
+        advance();
+    }
+    
+    // Check for array type: int[] x
+    while (match(TOKEN_LBRACKET)) {
+         while(current()->type != TOKEN_RBRACKET && current()->type != TOKEN_EOF) advance();
+         expect(TOKEN_RBRACKET);
+         strcat(type_name, "[]");
+    }
+
+    if (match(TOKEN_IDENTIFIER)) {
+        char var_name[64];
+        strcpy(var_name, tokens.tokens[pos-1].text);
+        
+        int is_array = 0;
+        if (match(TOKEN_LBRACKET)) {
+            while(current()->type!=TOKEN_RBRACKET && current()->type!=TOKEN_EOF) advance();
+            expect(TOKEN_RBRACKET);
+            is_array = 1;
+        }
+        
+         ASTNode* decl = ast_new(AST_VAR_DECL);
+         strcpy(decl->text, var_name); // Var name
+         
+         // Child 0: Initializer expression
+         if (tokens.tokens[pos-1].type == TOKEN_ASSIGN) { 
+              decl->children[decl->child_count++] = parse_expression();
+         } else if (match(TOKEN_ASSIGN)) {
+              decl->children[decl->child_count++] = parse_expression();
+         } else {
+              // No initializer? Uninitialized var.
+              ASTNode* dummy = ast_new(AST_NUMBER);
+              strcpy(dummy->text, "0"); // Default init
+              decl->children[decl->child_count++] = dummy; 
+         }
+
+         // Child 1: Type
+         ASTNode* type_node = ast_new(AST_IDENTIFIER);
+         strcpy(type_node->text, type_name);
+         if (is_array) strcat(type_node->text, "[]"); // Mark as array
+         decl->children[decl->child_count++] = type_node;
+         
+         if (current()->type == TOKEN_SEMICOLON) advance();
+         return decl;
+    }
+    return NULL;
+}
+
+static ASTNode* parse_if_statement() {
+    advance(); // Consume IF
+    expect(TOKEN_LPAREN);
+    ASTNode* cond = parse_expression(); 
+    
+    Token* next = current();
+    if (next->type == TOKEN_EQ || next->type == TOKEN_NEQ || 
+        next->type == TOKEN_GT || next->type == TOKEN_LT || 
+        next->type == TOKEN_GE || next->type == TOKEN_LE) {
+            
+            char op[32];
+            strcpy(op, next->text);
+            advance();
+            ASTNode* rhs = parse_expression();
+            
+            ASTNode* op_node = ast_new(AST_CALL);
+            strcpy(op_node->text, op);
+            op_node->children[op_node->child_count++] = cond;
+            op_node->children[op_node->child_count++] = rhs;
+            cond = op_node;
+    }
+    
+    if (!match(TOKEN_RPAREN)) {
+            printf("Expected RPAREN after IF condition, got %d ('%s')\n", current()->type, current()->text);
+    }
+    
+    ASTNode* node = ast_new(AST_IF);
+    node->children[node->child_count++] = cond;
+    node->children[node->child_count++] = parse_statement();
+    
+    if (match(TOKEN_ELSE)) {
+        ASTNode* else_node = ast_new(AST_ELSE);
+        else_node->children[else_node->child_count++] = parse_statement();
+        node->children[node->child_count++] = else_node;
+    }
+    return node;
+}
+
+static ASTNode* parse_switch_statement() {
+    advance(); // Consume SWITCH
+    expect(TOKEN_LPAREN);
+    ASTNode* expr = parse_expression();
+    expect(TOKEN_RPAREN);
+    
+    ASTNode* switch_node = ast_new(AST_SWITCH);
+    switch_node->children[switch_node->child_count++] = expr;
+    
+    expect(TOKEN_LBRACE);
+    while(current()->type!=TOKEN_RBRACE && current()->type!=TOKEN_EOF) {
+            int start_pos = pos;
+            ASTNode* stmt = parse_statement();
+            if (stmt) switch_node->children[switch_node->child_count++] = stmt;
+            
+            if (pos == start_pos) {
+                 printf("Error: Unexpected token in switch: %s\n", current()->text);
+                 advance();
+            }
+    }
+    expect(TOKEN_RBRACE);
+    return switch_node;
+}
+
+static ASTNode* parse_case_statement() {
+    advance(); // CASE
+    ASTNode* case_node = ast_new(AST_CASE);
+    case_node->children[case_node->child_count++] = parse_expression();
+    expect(TOKEN_COLON);
+    while (current()->type != TOKEN_CASE && current()->type != TOKEN_DEFAULT && current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
+            int start_pos = pos;
+            ASTNode* s = parse_statement();
+            if (s) case_node->children[case_node->child_count++] = s;
+
+            if (pos == start_pos) {
+                 printf("Error: Unexpected token in case: %s\n", current()->text);
+                 advance();
+            }
+    }
+    return case_node;
+}
+
+static ASTNode* parse_default_statement() {
+    advance(); // DEFAULT
+    expect(TOKEN_COLON);
+    ASTNode* def_node = ast_new(AST_DEFAULT);
+        while (current()->type != TOKEN_CASE && current()->type != TOKEN_DEFAULT && current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
+            int start_pos = pos;
+            ASTNode* s = parse_statement();
+            if (s) def_node->children[def_node->child_count++] = s;
+
+            if (pos == start_pos) {
+                 printf("Error: Unexpected token in default: %s\n", current()->text);
+                 advance();
+            }
+    }
+    return def_node;
+}
+
+static ASTNode* parse_while_statement() {
+    advance(); // Consume WHILE
+    expect(TOKEN_LPAREN);
+    ASTNode* cond = parse_expression();
+    expect(TOKEN_RPAREN);
+    ASTNode* body = parse_block();
+    
+    ASTNode* node = ast_new(AST_WHILE);
+    node->children[node->child_count++] = cond;
+    node->children[node->child_count++] = body;
+    return node;
+}
+
+static ASTNode* parse_do_while_statement() {
+    advance(); // Consume DO
+    ASTNode* body = parse_block();
+    expect(TOKEN_WHILE);
+    expect(TOKEN_LPAREN);
+    ASTNode* cond = parse_expression();
+    expect(TOKEN_RPAREN);
+    
+    ASTNode* node = ast_new(AST_DO_WHILE);
+    node->children[node->child_count++] = body;
+    node->children[node->child_count++] = cond;
+    return node;
+}
+
+static ASTNode* parse_for_statement() {
+    advance(); // Consume FOR
+    expect(TOKEN_LPAREN);
+    ASTNode* node = ast_new(AST_FOR);
+    
+    // Init (stmt or expr)
+    if (current()->type != TOKEN_SEMICOLON) {
+            ASTNode* init = parse_statement(); 
+            if (init) node->children[node->child_count++] = init;
+    } else {
+            node->children[node->child_count++] = NULL;
+    }
+    if (current()->type == TOKEN_SEMICOLON) advance(); 
+
+    // Condition
+    if (current()->type != TOKEN_SEMICOLON) {
+            ASTNode* cond = parse_expression();
+            node->children[node->child_count++] = cond;
+    } else {
+            node->children[node->child_count++] = NULL;
+    }
+    if (current()->type == TOKEN_SEMICOLON) advance(); 
+    
+    // Iteration
+    if (current()->type != TOKEN_RPAREN) {
+            ASTNode* iter = parse_expression(); 
+            node->children[node->child_count++] = iter;
+    } else {
+            node->children[node->child_count++] = NULL;
+    }
+    expect(TOKEN_RPAREN);
+    
+    ASTNode* body = parse_statement(); 
+    node->children[node->child_count++] = body;
+    
+    return node;
+}
+
+static ASTNode* parse_return_statement() {
+    advance(); // Consume RETURN
+    ASTNode* node = ast_new(AST_RETURN);
+    if (current()->type != TOKEN_RBRACE && current()->type != TOKEN_SEMICOLON) { 
+            ASTNode* expr = parse_expression();
+            if (expr) {
+                node->children[node->child_count++] = expr;
+                while(match(TOKEN_COMMA)) {
+                    node->children[node->child_count++] = parse_expression();
+                }
+            }
+    }
+    if (current()->type == TOKEN_SEMICOLON) advance();
+    return node;
+}
+
+static ASTNode* parse_expression_statement() {
+    ASTNode* node = parse_expression();
+    // Check for assignment after parsing expression (e.g. member/array access LHS)
+    // This duplicates logic inside parse_identifier_statement partially but handles non-identifier starts (e.g. *ptr = val)
+    if (pos < tokens.count && 
+        (tokens.tokens[pos].type == TOKEN_ASSIGN || 
+         tokens.tokens[pos].type == TOKEN_PLUS_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_MINUS_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_STAR_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_SLASH_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_AND_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_OR_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_XOR_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_LSHIFT_ASSIGN ||
+         tokens.tokens[pos].type == TOKEN_RSHIFT_ASSIGN)) {
+          
+           ASTNode* assign = ast_new(AST_ASSIGN);
+           strcpy(assign->text, tokens.tokens[pos].text);
+           match(tokens.tokens[pos].type); // consume op
+           
+           assign->children[assign->child_count++] = node;
+           assign->children[assign->child_count++] = parse_expression();
+           
+           if (current()->type == TOKEN_SEMICOLON) advance();
+           return assign;
+    }
+
+    if (current()->type == TOKEN_SEMICOLON) advance();
+    return node;
+}
+
+static ASTNode* parse_identifier_statement() {
+    Token* t = current();
+    
+    // Check for assignments FIRST (before type declarations)
+    // Check lookahead for assignment operators
+    if (pos + 1 < tokens.count && 
+        (tokens.tokens[pos+1].type == TOKEN_ASSIGN || 
+         tokens.tokens[pos+1].type == TOKEN_PLUS_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_MINUS_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_STAR_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_SLASH_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_AND_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_OR_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_XOR_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_LSHIFT_ASSIGN ||
+         tokens.tokens[pos+1].type == TOKEN_RSHIFT_ASSIGN)) {
+          
+           ASTNode* assign = ast_new(AST_ASSIGN);
+           strcpy(assign->text, tokens.tokens[pos+1].text); // The operator
+           
+           ASTNode* lhs = ast_new(AST_IDENTIFIER);
+           strcpy(lhs->text, t->text);
+           assign->children[assign->child_count++] = lhs;
+           
+           advance(); // ident
+           advance(); // op
+           assign->children[assign->child_count++] = parse_expression();
+           
+           if (current()->type == TOKEN_SEMICOLON) advance();
+           return assign;
+    }
+    
+    // Then check for custom type declaration: MyType x ...
+    // Lookahead 1
+    if (pos + 1 < tokens.count && tokens.tokens[pos+1].type == TOKEN_IDENTIFIER) {
+         // Treat as declaration
+         char type_name[64];
+         strcpy(type_name, t->text);
+         advance(); // consume type
+         
+         char var_name[64];
+         strcpy(var_name, tokens.tokens[pos].text);
+         advance(); // consume var name
+         
+         // Check array
+         int is_array = 0;
+         if (match(TOKEN_LBRACKET)) {
+             while(current()->type!=TOKEN_RBRACKET && current()->type!=TOKEN_EOF) advance();
+             expect(TOKEN_RBRACKET);
+             is_array = 1;
+         }
+         
+         ASTNode* decl = ast_new(AST_VAR_DECL);
+         strcpy(decl->text, var_name);
+         
+         // Init
+         if (match(TOKEN_ASSIGN)) {
+             decl->children[decl->child_count++] = parse_expression();
+         } else {
+             // Default init 0
+             ASTNode* dummy = ast_new(AST_NUMBER);
+             strcpy(dummy->text, "0"); 
+             decl->children[decl->child_count++] = dummy;
+         }
+         
+         // Type
+         ASTNode* type_node = ast_new(AST_IDENTIFIER);
+         strcpy(type_node->text, type_name);
+         if (is_array) strcat(type_node->text, "[]");
+         decl->children[decl->child_count++] = type_node;
+         if (current()->type == TOKEN_SEMICOLON) advance();
+         return decl;
+    } 
+    
+    // Fallback to expression or complex assignment (e.g. arr[i] = val)
+    return parse_expression_statement();
+}
+
+static ASTNode* parse_struct_statement() {
+    advance(); // struct
+    if (expect(TOKEN_IDENTIFIER)) {
+        char struct_name[64];
+        strcpy(struct_name, tokens.tokens[pos-1].text);
+        
+        if (match(TOKEN_LBRACE)) {
+            ASTNode* node = ast_new(AST_STRUCT_DECL);
+            strcpy(node->text, struct_name);
+            
+            while (current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
+                 int start_pos = pos;
+                 ASTNode* field = parse_statement();
+                 if (field) node->children[node->child_count++] = field;
+                 
+                 if (pos == start_pos) {
+                     printf("Error: Unexpected token in struct statement: %s\n", current()->text);
+                     advance();
+                 }
+            }
+            expect(TOKEN_RBRACE);
+            return node;
+        }
+    }
+    return NULL; 
+}
+
+static ASTNode* parse_method_statement() {
+    advance(); // method
+    if (expect(TOKEN_IDENTIFIER)) {
+        char name[64];
+        strcpy(name, tokens.tokens[pos-1].text);
+        expect(TOKEN_LPAREN);
+        while(current()->type!=TOKEN_RPAREN && current()->type!=TOKEN_EOF) advance();
+        expect(TOKEN_RPAREN);
+        ASTNode* node = ast_new(AST_FUNCTION);
+        strcpy(node->text, name);
+        return node; 
+    }
+    return NULL;
+}
+
+static ASTNode* parse_alias_statement() {
+    advance(); // alias
+    
+    // Single alias: alias Name = Expression/Type
+    if (expect(TOKEN_IDENTIFIER)) {
+         char alias_name[64];
+         strcpy(alias_name, tokens.tokens[pos-1].text);
+         if (match(TOKEN_ASSIGN)) {
+             // Parse the target as an expression (handles std.out.printf)
+             // We use parse_primary to catch identifiers/member access
+             // We might need parse_expression? 
+             // std.out.printf is a Member Access chain.
+             // parse_expression handles that.
+             ASTNode* target = parse_expression();
+             
+             if (target) {
+                 // Register for substitution
+                 register_alias(alias_name, target);
+                 
+                 // Return NULL or a dummy node?
+                 // If we return NULL, parse_statement might return NULL?
+                 // But parse_statement swallows it? 
+                 // If we return a node, codegen will try to generate it.
+                 // We want strictly compiler-time alias for now?
+                 // Existing code generated AST_TYPE_ALIAS.
+                 // For method alias, we don't want runtime code.
+                 // Let's return NULL so it disappears from AST?
+                 // parse_statement caller handles NULL? check below.
+                 // parse_statement calls it. If returns NULL...
+                 // parse_block: if (stmt) block->children...
+                 // So returning NULL is safe and correct for compile-time directive.
+                 // BUT we need to be careful about semicolon?
+                 
+                 // Consume optional semicolon
+                 if (current()->type == TOKEN_SEMICOLON) advance();
+                 
+                 return NULL; 
+             }
+         }
+    }
+    return NULL;
+}
+
 static ASTNode* parse_statement() {
     Token* t = current();
-    // printf("parse_statement start, token: %d ('%s')\n", t->type, t->text);
     
-    if (t->type == TOKEN_STRING || t->type == TOKEN_INT || t->type == TOKEN_BOOL ||
-        t->type == TOKEN_BYTE || t->type == TOKEN_UBYTE ||
-        t->type == TOKEN_SHORT || t->type == TOKEN_USHORT ||
-        t->type == TOKEN_UINT ||
-        t->type == TOKEN_LONG || t->type == TOKEN_ULONG ||
-        t->type == TOKEN_FLOAT || t->type == TOKEN_DOUBLE ||
-        t->type == TOKEN_WCHAR || t->type == TOKEN_VOID ||
-        t->type == TOKEN_MAP || t->type == TOKEN_STRUCT || t->type == TOKEN_VAR) {
-        // Variable declaration: string s = ...
-        // or int x = ...
-        // or var x = ...
-        // or struct Point p = ...
-        char type_name[128];
-        strcpy(type_name, t->text);
-        advance();
-        
-        // Special handling for struct: "struct Type varname"
-        if (strcmp(type_name, "struct") == 0 && current()->type == TOKEN_IDENTIFIER) {
-            // Consume the struct type name
-            strcat(type_name, " ");
-            strcat(type_name, current()->text);
+    // Check for struct definition explicitly
+    if (t->type == TOKEN_STRUCT && pos+2 < tokens.count && 
+        tokens.tokens[pos+1].type == TOKEN_IDENTIFIER && 
+        tokens.tokens[pos+2].type == TOKEN_LBRACE) {
+          return parse_struct_statement();
+    }
+
+    if (is_type_token(t->type)) {
+        ASTNode* decl = parse_var_decl();
+        if (decl) return decl; 
+    }
+    
+    switch (t->type) {
+        case TOKEN_IDENTIFIER: return parse_identifier_statement();
+        case TOKEN_IF: return parse_if_statement();
+        case TOKEN_SWITCH: return parse_switch_statement();
+        case TOKEN_CASE: return parse_case_statement();
+        case TOKEN_DEFAULT: return parse_default_statement();
+        case TOKEN_WHILE: return parse_while_statement();
+        case TOKEN_DO: return parse_do_while_statement();
+        case TOKEN_FOR: return parse_for_statement();
+        case TOKEN_RETURN: return parse_return_statement();
+        case TOKEN_LBRACE: return parse_block();
+        case TOKEN_METHOD: return parse_method_statement();
+        case TOKEN_ALIAS: return parse_alias_statement();
+        case TOKEN_BREAK: {
             advance();
+            ASTNode* node = ast_new(AST_BREAK);
+            if (current()->type == TOKEN_SEMICOLON) advance();
+            return node;
         }
-        
-        // Check for array type: int[] x
-        while (match(TOKEN_LBRACKET)) {
-             while(current()->type != TOKEN_RBRACKET && current()->type != TOKEN_EOF) advance();
-             expect(TOKEN_RBRACKET);
-             strcat(type_name, "[]");
-        }
-
-        if (match(TOKEN_IDENTIFIER)) {
-            char var_name[64];
-            strcpy(var_name, tokens.tokens[pos-1].text);
-            
-            int is_array = 0;
-            if (match(TOKEN_LBRACKET)) {
-                while(current()->type!=TOKEN_RBRACKET && current()->type!=TOKEN_EOF) advance();
-                expect(TOKEN_RBRACKET);
-                is_array = 1;
-            }
-            
-            // Always handle as declaration if type matches
-             ASTNode* decl = ast_new(AST_VAR_DECL);
-             strcpy(decl->text, var_name); // Var name
-             
-             // Child 0: Initializer expression
-             if (tokens.tokens[pos-1].type == TOKEN_ASSIGN) { // If just matched ASSIGN (unlikely here if logic changed)
-                  decl->children[decl->child_count++] = parse_expression();
-             } else if (match(TOKEN_ASSIGN)) {
-                  decl->children[decl->child_count++] = parse_expression();
-             } else {
-                  // No initializer? Uninitialized var.
-                  ASTNode* dummy = ast_new(AST_NUMBER);
-                  strcpy(dummy->text, "0"); // Default init?
-                  decl->children[decl->child_count++] = dummy; 
-             }
-
-             // Child 1: Type
-             ASTNode* type_node = ast_new(AST_IDENTIFIER);
-             strcpy(type_node->text, type_name);
-             if (is_array) strcat(type_node->text, "[]"); // Mark as array
-             decl->children[decl->child_count++] = type_node;
-             return decl;
-        }
-    } else if (t->type == TOKEN_IDENTIFIER) {
-        // Check for assignments FIRST (before type declarations)
-        // Check lookahead for assignment operators
-        if (pos + 1 < tokens.count && 
-            (tokens.tokens[pos+1].type == TOKEN_ASSIGN || 
-             tokens.tokens[pos+1].type == TOKEN_PLUS_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_MINUS_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_STAR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_SLASH_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_AND_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_OR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_XOR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_LSHIFT_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_RSHIFT_ASSIGN)) {
-              
-              ASTNode* assign = ast_new(AST_ASSIGN);
-              strcpy(assign->text, tokens.tokens[pos+1].text); // The operator
-              
-              ASTNode* lhs = ast_new(AST_IDENTIFIER);
-              strcpy(lhs->text, t->text);
-              assign->children[assign->child_count++] = lhs;
-              
-              advance(); // ident
-              advance(); // op
-              assign->children[assign->child_count++] = parse_expression();
-              return assign;
-        }
-        
-        // Then check for custom type declaration: MyType x ...
-        // Lookahead 1
-        if (pos + 1 < tokens.count && tokens.tokens[pos+1].type == TOKEN_IDENTIFIER) {
-             // Treat as declaration
-             char type_name[64];
-             strcpy(type_name, t->text);
-             advance(); // consume type
-             
-             char var_name[64];
-             strcpy(var_name, tokens.tokens[pos].text);
-             advance(); // consume var name
-             
-             // Check array
-             int is_array = 0;
-             if (match(TOKEN_LBRACKET)) {
-                 while(current()->type!=TOKEN_RBRACKET && current()->type!=TOKEN_EOF) advance();
-                 expect(TOKEN_RBRACKET);
-                 is_array = 1;
-             }
-             
-             ASTNode* decl = ast_new(AST_VAR_DECL);
-             strcpy(decl->text, var_name);
-             
-             // Init
-             if (match(TOKEN_ASSIGN)) {
-                 decl->children[decl->child_count++] = parse_expression();
-             } else {
-                 // Default init 0
-                 ASTNode* dummy = ast_new(AST_NUMBER);
-                 strcpy(dummy->text, "0"); 
-                 decl->children[decl->child_count++] = dummy;
-             }
-             
-             // Type
-             ASTNode* type_node = ast_new(AST_IDENTIFIER);
-             strcpy(type_node->text, type_name);
-             if (is_array) strcat(type_node->text, "[]");
-             decl->children[decl->child_count++] = type_node;
-             return decl;
-        } else {
-             // Maybe function call or expression statement?
-             // Treat as expression statement
-             ASTNode* expr = parse_expression();
-             
-             // Check for assignment after parsing expression (e.g. member/array access LHS)
-             if (pos < tokens.count && 
-                 (tokens.tokens[pos].type == TOKEN_ASSIGN || 
-                  tokens.tokens[pos].type == TOKEN_PLUS_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_MINUS_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_STAR_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_SLASH_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_AND_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_OR_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_XOR_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_LSHIFT_ASSIGN ||
-                  tokens.tokens[pos].type == TOKEN_RSHIFT_ASSIGN)) {
-                  
-                   ASTNode* assign = ast_new(AST_ASSIGN);
-                   strcpy(assign->text, tokens.tokens[pos].text);
-                   match(tokens.tokens[pos].type); // consume op
-                   
-                   assign->children[assign->child_count++] = expr;
-                   assign->children[assign->child_count++] = parse_expression();
-                   
-                   if (current()->type == TOKEN_SEMICOLON) advance();
-                   return assign;
-             }
-             
-             if (current()->type == TOKEN_SEMICOLON) advance();
-             return expr;
-         }
-    } else if (t->type == TOKEN_SWITCH) {
-        advance();
-        expect(TOKEN_LPAREN);
-        ASTNode* expr = parse_expression();
-        expect(TOKEN_RPAREN);
-        
-        ASTNode* switch_node = ast_new(AST_SWITCH);
-        switch_node->children[switch_node->child_count++] = expr;
-        
-        expect(TOKEN_LBRACE);
-        while(current()->type!=TOKEN_RBRACE && current()->type!=TOKEN_EOF) {
-             ASTNode* stmt = parse_statement();
-             if (stmt) switch_node->children[switch_node->child_count++] = stmt;
-        }
-        expect(TOKEN_RBRACE);
-        return switch_node;
-    } else if (t->type == TOKEN_CASE) {
-        advance();
-        ASTNode* case_node = ast_new(AST_CASE);
-        case_node->children[case_node->child_count++] = parse_expression();
-        expect(TOKEN_COLON);
-        // Statements are siblings in the switch block in this simple AST, 
-        // OR we can make statements children of CASE?
-        // C-style parser usually treats case as a label.
-        // But for AST generation, it's easier if CASE contains statements or just marks position?
-        // Given existing structure, let's treat CASE as a node, and subsequent statements as siblings in the SWITCH list?
-        // Or make CASE contain the statements until next case/end?
-        // Let's try to capture statements until next case.
-        while (current()->type != TOKEN_CASE && current()->type != TOKEN_DEFAULT && current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
-             ASTNode* s = parse_statement();
-             if (s) case_node->children[case_node->child_count++] = s;
-        }
-        return case_node;
-    } else if (t->type == TOKEN_DEFAULT) {
-        advance();
-        expect(TOKEN_COLON);
-        ASTNode* def_node = ast_new(AST_DEFAULT);
-         while (current()->type != TOKEN_CASE && current()->type != TOKEN_DEFAULT && current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
-             ASTNode* s = parse_statement();
-             if (s) def_node->children[def_node->child_count++] = s;
-        }
-        return def_node;
-    } else if (t->type == TOKEN_FALLTHROUGH) {
-        advance();
-        // Ignoring for AST/codegen for now, or emit a special node?
-        // C fallthrough is default, but COME says fallthrough explicit.
-        // Codegen needs to know? 
-        // Actually if we group statements under CASE, we naturally break unless we check fallthrough.
-        // Let's assume codegen implements switch as if-else chains or real switch.
-        // For MVP, ignore fallthrough implies manual break handling? 
-        // Wait, "COME switch does NOT fall through by default".
-        // So we need to emit "break" at end of case unless fallthrough is present.
-        // Let's return a FALLTHROUGH token node if strictly needed, or just handle in codegen logic.
-        return NULL; // Consume
-    } else if (t->type == TOKEN_WHILE) {
-        advance();
-        expect(TOKEN_LPAREN);
-        ASTNode* cond = parse_expression();
-        expect(TOKEN_RPAREN);
-        ASTNode* body = parse_block();
-        
-        ASTNode* node = ast_new(AST_WHILE);
-        node->children[node->child_count++] = cond;
-        node->children[node->child_count++] = body;
-        return node;
-    } else if (t->type == TOKEN_DO) {
-        advance();
-        ASTNode* body = parse_block();
-        expect(TOKEN_WHILE);
-        expect(TOKEN_LPAREN);
-        ASTNode* cond = parse_expression();
-        expect(TOKEN_RPAREN);
-        
-        ASTNode* node = ast_new(AST_DO_WHILE);
-        node->children[node->child_count++] = body;
-        node->children[node->child_count++] = cond;
-        return node;
-    } else if (t->type == TOKEN_FOR) {
-        advance();
-        expect(TOKEN_LPAREN);
-        ASTNode* node = ast_new(AST_FOR);
-        
-        // Init (stmt or expr)
-        if (current()->type != TOKEN_SEMICOLON) {
-             ASTNode* init = parse_statement(); // Handles variable decl or expr
-             if (init) node->children[node->child_count++] = init;
-        } else {
-             // Empty init
-             node->children[node->child_count++] = NULL;
-        }
-        if (current()->type == TOKEN_SEMICOLON) advance(); // consume ;
-
-        // Condition
-        if (current()->type != TOKEN_SEMICOLON) {
-             ASTNode* cond = parse_expression();
-             node->children[node->child_count++] = cond;
-        } else {
-             node->children[node->child_count++] = NULL;
-        }
-        if (current()->type == TOKEN_SEMICOLON) advance(); // consume ;
-        
-        // Iteration
-        if (current()->type != TOKEN_RPAREN) {
-             ASTNode* iter = parse_expression(); // usually expr: i++
-             // But i++ is not expression in some parsers?
-             // If i++ is handled as assignment or unary update?
-             // My parser doesn't handle ++ yet?
-             // come.co uses `i++`.
-             // I need to add ++/-- tokens and parsing logic.
-             // Assume i++ parses as expression or assignment.
-             // If parse_expression fails on i++, we are in trouble.
-             // Quick check: lexer has no `++`.
-             // I'll add `++` token logic in next step or now?
-             // For now assume `i = i + 1` or similar if I can't parse `i++`.
-             // But come.co uses `k++`.
-             // I'll assume I update lexer for ++ too.
-             node->children[node->child_count++] = iter;
-        } else {
-             node->children[node->child_count++] = NULL;
-        }
-        expect(TOKEN_RPAREN);
-        
-        ASTNode* body = parse_statement(); // block or single stmt
-        node->children[node->child_count++] = body;
-        
-        return node;
-    }
-    
-    if (t->type == TOKEN_IDENTIFIER) {
-         // ... (existing identifier handling)
-         // Need to verify if it handles method calls properly vs assignment vs declaration
-         // ...
-         // (Keep existing logic but wrap the tail)
-    }
-
-    // Include the original trail
-    if (t->type == TOKEN_PRINTF) {
-        // ... (Keep existing printf logic)
-        advance();
-        expect(TOKEN_LPAREN);
-        ASTNode* node = ast_new(AST_PRINTF);
-        if (current()->type == TOKEN_STRING_LITERAL) {
-            strcpy(node->text, current()->text);
+        case TOKEN_CONTINUE: {
             advance();
+            ASTNode* node = ast_new(AST_CONTINUE);
+            if (current()->type == TOKEN_SEMICOLON) advance();
+            return node;
         }
-        while (match(TOKEN_COMMA)) {
-            node->children[node->child_count++] = parse_expression();
-        }
-        expect(TOKEN_RPAREN);
-        return node;
+        case TOKEN_FALLTHROUGH: advance(); return NULL;
+        default: return parse_expression_statement();
     }
-    
-    // ... (Keep IF/RETURN logic)
-    
-     if (t->type == TOKEN_IF) {
-        advance();
-        expect(TOKEN_LPAREN);
-        ASTNode* cond = parse_expression(); 
-        
-        // Simple comparison operator check hack in existing parser...
-        Token* next = current();
-        if (next->type == TOKEN_EQ || next->type == TOKEN_NEQ || 
-            next->type == TOKEN_GT || next->type == TOKEN_LT || 
-            next->type == TOKEN_GE || next->type == TOKEN_LE) {
-             
-             char op[32];
-             strcpy(op, next->text);
-             advance();
-             ASTNode* rhs = parse_expression();
-             
-             ASTNode* op_node = ast_new(AST_CALL);
-             strcpy(op_node->text, op);
-             op_node->children[op_node->child_count++] = cond;
-             op_node->children[op_node->child_count++] = rhs;
-             cond = op_node;
-        }
-        
-        if (!match(TOKEN_RPAREN)) {
-             printf("Expected RPAREN after IF condition, got %d ('%s')\n", current()->type, current()->text);
-        }
-        
-        ASTNode* node = ast_new(AST_IF);
-        node->children[node->child_count++] = cond;
-        node->children[node->child_count++] = parse_statement();
-        
-        if (match(TOKEN_ELSE)) {
-            ASTNode* else_node = ast_new(AST_ELSE);
-            else_node->children[else_node->child_count++] = parse_statement();
-            node->children[node->child_count++] = else_node;
-        }
-        return node;
-    } else if (t->type == TOKEN_RETURN) {
-        advance();
-        ASTNode* node = ast_new(AST_RETURN);
-        if (current()->type != TOKEN_RBRACE) { // if not end of block
-             // Handle multiple return values?
-             // Spec: `return (a + b), (a > b) ? ">" : "<="`
-             // Expression parser doesn't handle comma yet (except in arg lists).
-             // Assume single expr for now or modify expr parser.
-             ASTNode* expr = parse_expression();
-             if (expr) {
-                 node->children[node->child_count++] = expr;
-                 while(match(TOKEN_COMMA)) {
-                     node->children[node->child_count++] = parse_expression();
-                 }
-             }
-        }
-        return node;
-    } else if (t->type == TOKEN_LBRACE) {
-        return parse_block();    
-    }
-    
-    // Handle assignments
-    if (t->type == TOKEN_IDENTIFIER) {
-         // Check lookahead for assignment
-         if (tokens.tokens[pos+1].type == TOKEN_ASSIGN || 
-             tokens.tokens[pos+1].type == TOKEN_PLUS_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_MINUS_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_STAR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_SLASH_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_AND_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_OR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_XOR_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_LSHIFT_ASSIGN ||
-             tokens.tokens[pos+1].type == TOKEN_RSHIFT_ASSIGN) {
-              
-              ASTNode* assign = ast_new(AST_ASSIGN);
-              strcpy(assign->text, tokens.tokens[pos+1].text); // The operator
-              
-              ASTNode* lhs = ast_new(AST_IDENTIFIER);
-              strcpy(lhs->text, t->text);
-              assign->children[assign->child_count++] = lhs;
-              
-              advance(); // ident
-              advance(); // op
-              assign->children[assign->child_count++] = parse_expression();
-              return assign;
-         }
-         
-         // ARRAY assignment: arr[i] = val
-         if (tokens.tokens[pos+1].type == TOKEN_LBRACKET) {
-             // ... Complex lookahead or parse as expression and check if lvalue?
-             // Simplification: parse as expression, check if top node is ARRAY_ACCESS, then check for ASSIGN.
-             // But parse_expression consumes tokens.
-             // Let's try parsing expr.
-             ASTNode* expr = parse_expression();
-             if (match(TOKEN_ASSIGN)) {
-                 ASTNode* assign = ast_new(AST_ASSIGN);
-                 strcpy(assign->text, "=");
-                 assign->children[assign->child_count++] = expr;
-                 assign->children[assign->child_count++] = parse_expression();
-                 return assign;
-             }
-             return expr;
-         }
-    }
-    
-    // Default fallback to var declarations (primitives)
-    if (t->type == TOKEN_STRING || t->type == TOKEN_INT || t->type == TOKEN_BOOL ||
-        t->type == TOKEN_BYTE || t->type == TOKEN_UBYTE ||
-        t->type == TOKEN_SHORT || t->type == TOKEN_USHORT ||
-        t->type == TOKEN_UINT ||
-        t->type == TOKEN_LONG || t->type == TOKEN_ULONG ||
-        t->type == TOKEN_FLOAT || t->type == TOKEN_DOUBLE ||
-        t->type == TOKEN_WCHAR || t->type == TOKEN_VOID ||
-        t->type == TOKEN_MAP || t->type == TOKEN_STRUCT || t->type == TOKEN_VAR) {
-            // ... (keep existing decl logic)
-             char type_name[128];
-        strcpy(type_name, t->text);
-        advance();
-        
-        // Check for array: string args[]
-        if (match(TOKEN_IDENTIFIER)) {
-            char var_name[64];
-            strcpy(var_name, tokens.tokens[pos-1].text);
-            
-            int is_array = 0;
-            if (match(TOKEN_LBRACKET)) {
-                // Handle size expression or empty
-                is_array = 1;
-                strcat(type_name, "[");
-                if (current()->type != TOKEN_RBRACKET) {
-                    strcat(type_name, current()->text);
-                    while (current()->type != TOKEN_RBRACKET && current()->type != TOKEN_EOF) advance();
-                }
-                strcat(type_name, "]");
-                expect(TOKEN_RBRACKET);
-            }
-            
-            if (match(TOKEN_ASSIGN) || is_array) { // Handle "Type x;" too? For now require assignment or array syntax to distinguish from expression stmt effectively? No, "Type x" is decl.
-                ASTNode* decl = ast_new(AST_VAR_DECL);
-                strcpy(decl->text, var_name); // Var name
-                
-                // Child 0: Initializer expression
-                if (tokens.tokens[pos-1].type == TOKEN_ASSIGN) { // If just matched ASSIGN
-                     decl->children[decl->child_count++] = parse_expression();
-                } else if (match(TOKEN_ASSIGN)) {
-                     decl->children[decl->child_count++] = parse_expression();
-                } else {
-                     // No initializer? Uninitialized var.
-                     ASTNode* dummy = ast_new(AST_NUMBER);
-                     strcpy(dummy->text, "0"); // Default init?
-                     decl->children[decl->child_count++] = dummy; 
-                }
-
-                ASTNode* type_node = ast_new(AST_IDENTIFIER);
-                strcpy(type_node->text, type_name);
-                if (is_array) strcat(type_node->text, "[]"); // Mark as array
-                decl->children[decl->child_count++] = type_node;
-                return decl;
-            }
-        }
-    } else if (t->type == TOKEN_METHOD) {
-        // method Name()
-        advance();
-        if (expect(TOKEN_IDENTIFIER)) {
-            char name[64];
-            strcpy(name, tokens.tokens[pos-1].text);
-            expect(TOKEN_LPAREN);
-            // args?
-            while(current()->type!=TOKEN_RPAREN && current()->type!=TOKEN_EOF) advance();
-            expect(TOKEN_RPAREN);
-            // body?
-            // In struct, just decl.
-            // Return dummy node
-             ASTNode* node = ast_new(AST_FUNCTION); // Use function for now or custom
-             strcpy(node->text, name);
-             return node; 
-        }
-    } else if (t->type == TOKEN_ALIAS) { // Handle alias
-        advance();
-        
-        if (match(TOKEN_LPAREN)) {
-            // alias (A, B) = (T1, T2)
-            // Parse identifiers
-            char names[16][64]; // Support up to 16 aliases in a tuple for now
-            int name_count = 0;
-            
-            do {
-                if (expect(TOKEN_IDENTIFIER)) {
-                    strcpy(names[name_count++], tokens.tokens[pos-1].text);
-                }
-            } while (match(TOKEN_COMMA));
-            
-            expect(TOKEN_RPAREN);
-            expect(TOKEN_ASSIGN);
-            expect(TOKEN_LPAREN);
-            
-            // Parse types
-            ASTNode* block = ast_new(AST_BLOCK);
-            int type_count = 0;
-            
-            do {
-                 if (match(TOKEN_IDENTIFIER) || match(TOKEN_INT) || match(TOKEN_STRING) || 
-                     match(TOKEN_BYTE) || match(TOKEN_UBYTE) ||
-                     match(TOKEN_SHORT) || match(TOKEN_USHORT) ||
-                     match(TOKEN_UINT) ||
-                     match(TOKEN_LONG) || match(TOKEN_ULONG) ||
-                     match(TOKEN_FLOAT) || match(TOKEN_DOUBLE) ||
-                     match(TOKEN_WCHAR) || match(TOKEN_MAP) || match(TOKEN_STRUCT)) {
-                         
-                    if (type_count < name_count) {
-                        ASTNode* node = ast_new(AST_TYPE_ALIAS);
-                        strcpy(node->text, names[type_count]);
-                        
-                        ASTNode* target = ast_new(AST_IDENTIFIER);
-                        strcpy(target->text, tokens.tokens[pos-1].text);
-                        node->children[node->child_count++] = target;
-                        
-                        block->children[block->child_count++] = node;
-                    }
-                    type_count++;
-                 }
-            } while (match(TOKEN_COMMA));
-            
-            expect(TOKEN_RPAREN);
-            
-            if (name_count != type_count) {
-                printf("Error: Alias count (%d) does not match type count (%d)\n", name_count, type_count);
-            }
-            
-            return block;
-
-        } else if (expect(TOKEN_IDENTIFIER)) {
-             char alias_name[64];
-             strcpy(alias_name, tokens.tokens[pos-1].text);
-             
-             if (match(TOKEN_ASSIGN)) {
-                 if (match(TOKEN_IDENTIFIER) || match(TOKEN_INT) || match(TOKEN_STRING) || 
-                     match(TOKEN_BYTE) || match(TOKEN_UBYTE) ||
-                     match(TOKEN_SHORT) || match(TOKEN_USHORT) ||
-                     match(TOKEN_UINT) ||
-                     match(TOKEN_LONG) || match(TOKEN_ULONG) ||
-                     match(TOKEN_FLOAT) || match(TOKEN_DOUBLE) ||
-                     match(TOKEN_WCHAR) || match(TOKEN_MAP) || match(TOKEN_STRUCT)) {
-                      
-                      char type_text[128];
-                      strcpy(type_text, tokens.tokens[pos-1].text);
-                      
-                      // Special case: if type is "struct", also consume the struct name
-                      if (strcmp(type_text, "struct") == 0 && current()->type == TOKEN_IDENTIFIER) {
-                          strcat(type_text, " ");
-                          strcat(type_text, current()->text);
-                          advance();
-                      }
-                      
-                      ASTNode* node = ast_new(AST_TYPE_ALIAS);
-                      strcpy(node->text, alias_name);
-                      
-                      ASTNode* target = ast_new(AST_IDENTIFIER);
-                      strcpy(target->text, type_text);
-                      node->children[node->child_count++] = target;
-                      return node;
-                 }
-             }
-        }
-    } else if (t->type == TOKEN_STRUCT) {
-        // struct Name { ... } OR struct Name var;
-        advance();
-        if (expect(TOKEN_IDENTIFIER)) {
-            char struct_name[64];
-            strcpy(struct_name, tokens.tokens[pos-1].text);
-            
-            if (match(TOKEN_LBRACE)) {
-                // struct definition: struct Name { int x; int y; }
-                ASTNode* node = ast_new(AST_STRUCT_DECL);
-                strcpy(node->text, struct_name);
-                
-                while (current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
-                     // Parse fields like "int x" (without assignment)
-                     ASTNode* field = parse_statement(); // Reuse var decl parsing?
-                     // parse_statement expects "int x = ..." or "int x". 
-                     // Let's rely on standard decl parsing but ignore assignment if missing?
-                     // Actually parser currently expects assignment for var decls: "if (match(TOKEN_ASSIGN))"
-                     // We need to support decl without assignment.
-                     if (field) node->children[node->child_count++] = field;
-                }
-                expect(TOKEN_RBRACE);
-                return node;
-            } else if (match(TOKEN_IDENTIFIER)) {
-                 // struct Name var = ...
-                 // Treated as standard var decl below if we handle it there.
-            }
-        }
-    } else if (t->type == TOKEN_IDENTIFIER) {
-         // Could be "MyType x = ..." OR "x = ..." OR "x.method()"
-         // If next is IDENTIFIER, it's a declaration: "MyType x"
-         Token* next = &tokens.tokens[pos+1];
-         if (next->type == TOKEN_IDENTIFIER) {
-             // User defined type declaration
-             char type_name[64];
-             strcpy(type_name, t->text);
-             advance(); // eat type name
-             
-             char var_name[64];
-             strcpy(var_name, current()->text);
-             advance(); // eat var name
-             
-             if (match(TOKEN_ASSIGN)) {
-                 ASTNode* decl = ast_new(AST_VAR_DECL);
-                 strcpy(decl->text, var_name);
-                 
-                 ASTNode* type_node = ast_new(AST_IDENTIFIER);
-                 strcpy(type_node->text, type_name);
-                 
-                 decl->children[decl->child_count++] = parse_expression(); // Init
-                 decl->children[decl->child_count++] = type_node; // Type
-                 return decl;
-             }
-         }
-         
-        // Assignment or method call as statement
-        // Check lookahead
-        if (tokens.tokens[pos+1].type == TOKEN_DOT || tokens.tokens[pos+1].type == TOKEN_ASSIGN) {
-             // Method call or assignment
-             // parse_expression will handle it?
-             // Not AST_ASSIGN is not in parse_expression yet.
-             ASTNode* expr = parse_expression();
-             return expr; // Treat as statement
-        }
-    }
-    
-    advance(); // Skip unknown
-    return NULL;
 }
 
 static ASTNode* parse_block() {
     expect(TOKEN_LBRACE);
     ASTNode* block = ast_new(AST_BLOCK);
     while (current()->type != TOKEN_RBRACE && current()->type != TOKEN_EOF) {
+        // printf("DEBUG: parse_block loop pos=%d type=%d text='%s'\n", pos, current()->type, current()->text);
+        int start_pos = pos;
         ASTNode* stmt = parse_statement();
         if (stmt) block->children[block->child_count++] = stmt;
+
+        if (pos == start_pos) {
+             printf("Error: Unexpected token in block: %s\n", current()->text);
+             advance();
+        }
     }
     expect(TOKEN_RBRACE);
     return block;
 }
 
 static void parse_import(ASTNode* program) {
-    advance();
+    advance(); // import
     if (match(TOKEN_LPAREN)) {
-        // import ( ... )
+        // import ( std, string )
         while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
-            advance(); 
+            if (current()->type == TOKEN_IDENTIFIER || current()->type == TOKEN_STRING_LITERAL || current()->type == TOKEN_STRING) {
+                ASTNode* imp = ast_new(AST_IMPORT);
+                strcpy(imp->text, current()->text);
+                program->children[program->child_count++] = imp;
+                advance();
+                match(TOKEN_COMMA);
+            } else {
+                advance();
+            }
         }
         expect(TOKEN_RPAREN);
     } else {
-        // import std or import "pkg"
-        advance(); 
-        while(match(TOKEN_COMMA)) advance(); // import a, b
+        // import std
+        if (current()->type == TOKEN_IDENTIFIER || current()->type == TOKEN_STRING_LITERAL || current()->type == TOKEN_STRING) {
+            ASTNode* imp = ast_new(AST_IMPORT);
+            strcpy(imp->text, current()->text);
+            program->children[program->child_count++] = imp;
+            advance();
+            while(match(TOKEN_COMMA)) {
+                 if (current()->type == TOKEN_IDENTIFIER || current()->type == TOKEN_STRING_LITERAL || current()->type == TOKEN_STRING) {
+                     ASTNode* imp2 = ast_new(AST_IMPORT);
+                     strcpy(imp2->text, current()->text);
+                     program->children[program->child_count++] = imp2;
+                     advance();
+                 }
+            }
+        }
     }
 }
 
@@ -1003,7 +861,18 @@ static void parse_export(ASTNode* program) {
     advance();
     if (match(TOKEN_LPAREN)) {
         while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
-            advance();
+            // printf("DEBUG: parse_export loop pos=%d type=%d text='%s'\n", pos, current()->type, current()->text);
+            int start_pos = pos;
+            if (current()->type == TOKEN_COMMA) {
+                advance();
+                continue;
+            }
+            parse_top_level_decl(program);
+            
+            if (pos == start_pos) {
+                 printf("Error: Unexpected token in export: %s\n", current()->text);
+                 advance();
+            }
         }
         expect(TOKEN_RPAREN);
     } else {
@@ -1071,8 +940,14 @@ static void parse_union(ASTNode* program) {
         strcpy(node->text, tokens.tokens[pos-1].text);
         expect(TOKEN_LBRACE);
         while(current()->type!=TOKEN_RBRACE && current()->type!=TOKEN_EOF) {
+             int start_pos = pos;
              ASTNode* field = parse_statement(); // Reusing var parsing
              if (field) node->children[node->child_count++] = field;
+
+             if (pos == start_pos) {
+                 printf("Error: Unexpected token in union: %s\n", current()->text);
+                 advance();
+             }
         }
         expect(TOKEN_RBRACE);
         program->children[program->child_count++] = node;
@@ -1087,19 +962,57 @@ static void parse_struct(ASTNode* program) {
         
         if (match(TOKEN_LBRACE)) {
             while(current()->type!=TOKEN_RBRACE && current()->type!=TOKEN_EOF) {
-                 // Check for method decl inside struct: method name()
+                 int start_pos = pos;
+                 // Check for method decl inside struct: method name() OR Type name()
+                 int is_method = 0;
                  if (match(TOKEN_METHOD)) {
-                     // method ident()
+                     is_method = 1;
+                 } else {
+                     // Lookahead for Type name(
+                     // We can peek.
+                     // If current is Type, Next is Ident, NextNext is LPAREN -> Method.
+                     if (is_type_token(current()->type)) {
+                         if (tokens.tokens[pos+1].type == TOKEN_IDENTIFIER && 
+                             tokens.tokens[pos+2].type == TOKEN_LPAREN) {
+                             is_method = 1;
+                             // Don't consume yet, handled inside if
+                         }
+                     }
+                 }
+
+                 if (is_method) {
+                     // method ident() OR Type ident()
+                     char ret_type[64] = "void"; 
+                     if (current()->type != TOKEN_METHOD) {
+                         // It was Type ident(...)
+                         strcpy(ret_type, current()->text);
+                         advance(); // consume type
+                     }
+
                      if (expect(TOKEN_IDENTIFIER)) {
-                         // Add method decl to struct?
-                         // For C codegen, maybe just ignore or handle as func pointer?
-                         // Spec says methods are functions with 'self'.
-                         // Here just declaration.
-                         if (match(TOKEN_LPAREN)) expect(TOKEN_RPAREN);
+                         // Method name
+                         char method_name[64];
+                         strcpy(method_name, tokens.tokens[pos-1].text);
+                         
+                         if (match(TOKEN_LPAREN)) {
+                             // Consume tokens until matching RPAREN
+                             int balance = 1;
+                             while(balance > 0 && current()->type != TOKEN_EOF) {
+                                 if (current()->type == TOKEN_LPAREN) balance++;
+                                 else if (current()->type == TOKEN_RPAREN) balance--;
+                                 advance();
+                             }
+                             // TODO: Store method signature in AST for full support
+                        }
                      }
                  } else {
                      ASTNode* field = parse_statement();
                      if (field) node->children[node->child_count++] = field;
+                 }
+
+                 if (pos == start_pos) {
+                     printf("Error: Unexpected token in struct: %s\n", current()->text);
+                     advance();
                  }
             }
             expect(TOKEN_RBRACE);
@@ -1115,14 +1028,14 @@ static int is_type_token(TokenType type) {
             type == TOKEN_BOOL || type == TOKEN_FLOAT || type == TOKEN_DOUBLE ||
             type == TOKEN_BYTE || type == TOKEN_UBYTE ||
             type == TOKEN_SHORT || type == TOKEN_USHORT ||
+            type == TOKEN_UINT ||
             type == TOKEN_LONG || type == TOKEN_ULONG ||
-            type == TOKEN_WCHAR || type == TOKEN_MAP || type == TOKEN_VAR);
+            type == TOKEN_WCHAR || type == TOKEN_MAP || type == TOKEN_VAR || 
+            type == TOKEN_STRUCT || type == TOKEN_UNION);
 }
 
-static void parse_alias(ASTNode* program) {
-    advance(); // alias
-    // alias X = Y or alias X(args) = Y
-    if (expect(TOKEN_IDENTIFIER)) {
+static void parse_single_alias(ASTNode* program) {
+    if (match(TOKEN_IDENTIFIER)) {
         char name[256];
         strcpy(name, tokens.tokens[pos-1].text);
 
@@ -1130,15 +1043,13 @@ static void parse_alias(ASTNode* program) {
             // Macro alias: alias SQUARE(x) = ...
              while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) advance(); // skip args
              expect(TOKEN_RPAREN);
-             // Assume macro, skip for now or treat as const?
-             // Not creating AST yet to avoid codegen issues with macros
+             // Assume macro, skip for now
              if (match(TOKEN_ASSIGN)) parse_expression();
         }
         else if (match(TOKEN_ASSIGN)) {
              // alias X = Y
              // Check if Y is type
              if (is_type_token(current()->type) || current()->type == TOKEN_STRUCT || current()->type == TOKEN_UNION) {
-                  printf("DEBUG: Parsing Type Alias %s\n", name);
                   // Type Alias
                   ASTNode* node = ast_new(AST_TYPE_ALIAS);
                   strcpy(node->text, name);
@@ -1166,15 +1077,41 @@ static void parse_alias(ASTNode* program) {
                   node->child_count = 1;
                   program->children[program->child_count++] = node;
              } else {
-                  // Constant/Expression Alias
-                  // alias MAX = 5
-                  ASTNode* node = ast_new(AST_CONST_DECL);
-                  strcpy(node->text, name);
-                  node->children[0] = parse_expression();
-                  node->child_count = 1;
-                  program->children[program->child_count++] = node;
+                  // Constant/Expression Alias -> Substitution
+                  // alias name = expr
+                  // Parse expression and store in alias table
+                  // printf("DEBUG: Registering alias '%s'\n", name);
+                  ASTNode* expr = parse_expression();
+                  if (expr) {
+                      register_alias(name, expr);
+                  }
+                  if (current()->type == TOKEN_SEMICOLON) advance();
              }
         }
+    }
+}
+
+static void parse_alias(ASTNode* program) {
+    advance(); // alias
+    if (match(TOKEN_LPAREN)) {
+        // Grouped aliases: alias ( ... )
+        while (current()->type != TOKEN_RPAREN && current()->type != TOKEN_EOF) {
+            int start_pos = pos;
+            if (current()->type == TOKEN_COMMA) {
+                advance(); 
+                continue;
+            }
+            parse_single_alias(program);
+
+            if (pos == start_pos) {
+                 printf("Error: Unexpected token in alias: %s\n", current()->text);
+                 advance();
+            }
+        }
+        expect(TOKEN_RPAREN);
+    } else {
+        // Single alias
+        parse_single_alias(program);
     }
 }
 
@@ -1307,7 +1244,7 @@ static void parse_top_level_decl(ASTNode* program) {
                       self_arg->children[self_arg->child_count++] = NULL; // No init
                       
                       type_node = ast_new(AST_IDENTIFIER);
-                      sprintf(type_node->text, "struct %s*", struct_name); // Pointer to struct
+                      sprintf(type_node->text, "%s*", struct_name); // Pointer to struct (or typedef)
                       self_arg->children[self_arg->child_count++] = type_node;
                       
                       func->children[func->child_count++] = self_arg;
@@ -1442,14 +1379,39 @@ int parse_file(const char* filename, ASTNode** out_ast) {
     
     while (pos < tokens.count) {
         Token* t = current();
+        // printf("DEBUG: parse_file loop pos=%d type=%d text='%s'\n", pos, t->type, t->text);
         if (t->type == TOKEN_EOF) break;
         
         switch (t->type) {
             case TOKEN_MODULE:
                 advance(); // module
-                if (current()->type == TOKEN_MAIN) advance();
-                else if (current()->type == TOKEN_IDENTIFIER) advance();
-                // ignore module decl for AST
+                if (current()->type == TOKEN_DOT) {
+                    advance(); // .
+                    if (strcmp(current()->text, "init") == 0) {
+                        advance(); // init
+                        expect(TOKEN_LPAREN);
+                        expect(TOKEN_RPAREN);
+                        
+                        ASTNode* init_func = ast_new(AST_FUNCTION);
+                        strcpy(init_func->text, "module_init");
+                        
+                        // Return type: void
+                        ASTNode* ret = ast_new(AST_IDENTIFIER);
+                        strcpy(ret->text, "void");
+                        init_func->children[init_func->child_count++] = ret;
+                        
+                        // No args for now in module.init()
+                        
+                        if (current()->type == TOKEN_LBRACE) {
+                            ASTNode* body = parse_block();
+                            init_func->children[init_func->child_count++] = body;
+                            (*out_ast)->children[(*out_ast)->child_count++] = init_func;
+                        }
+                    }
+                } else if (current()->type == TOKEN_MAIN || current()->type == TOKEN_IDENTIFIER) {
+                     strncpy((*out_ast)->text, current()->text, 255);
+                     advance();
+                }
                 break;
             case TOKEN_IMPORT:
                 parse_import(*out_ast);

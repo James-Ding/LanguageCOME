@@ -43,6 +43,8 @@ typedef enum {
     AST_POST_DEC,
     AST_EXPORT,
     AST_IMPORT,
+    AST_BREAK,
+    AST_CONTINUE,
     AST_TYPE_END
 } ASTNodeType;
 

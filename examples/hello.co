@@ -2,8 +2,7 @@ module main
 
 import std
 
-main()
-{
-    std.printf("Hello world!\n")
+main() {
+    std.out.printf("Hello world!\n")
 }
 

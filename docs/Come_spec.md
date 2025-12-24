@@ -243,22 +243,26 @@ union TwoBytes {
 }
 ```
 
-### 6.2.3 Arrays
+### 6.2.3 Strings and Arrays
 
-Arrays in Come are implemented as dynamic headered buffers.
+String and arrays in Come are implemented as dynamic headered buffers.
 `[ uint size_in_bytes | uint element_count | element data... ]`
 size_in_bytes includes the header and payload.
 element_count is the number of elements currently stored.
 Elements are stored contiguously in memory.
 
 ```come
-int arr[10]       // Initially allocated with fixed size
-int dyn[]         // Initially empty dynamic array
+string name = "John" //Initially allocated on stack or heap with fixed size
+string json //Initially empty string, default dynamic 
+string filebuf="" //Initially empty string, default dynamic 
+int arr[10]       // Initially allocated on stack or heap  with fixed size
+int dyn[]         // Initially empty array, default dynamic 
 ```
 
 **Dynamic Promotion**
 
-A fixed-size array may be promoted to a fully dynamic array and relocated into the current memory arena when required.
+A fixed-size string/array may be created on stack or heap initially, and later being promoted
+to a fully dynamic array and relocated into the current memory arena when required.
 Dynamic promotion occurs under the following conditions:
 1. The array is assigned to another array variable.
 2. The array is passed as a function argument.

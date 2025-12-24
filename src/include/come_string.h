@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "array_module.h"
+#include "come_array.h"
 
 // Forward declaration for talloc context
 typedef void TALLOC_CTX;
@@ -16,6 +16,8 @@ typedef struct come_string_t {
     uint32_t count; // Number of characters used
     char data[];    // Flexible array member
 } come_string_t;
+
+typedef come_string_t* string;
 
 // Constructor/Destructor
 come_string_t* come_string_new(TALLOC_CTX* ctx, const char* str);
@@ -41,7 +43,7 @@ bool come_string_isdigit(const come_string_t* a);
 bool come_string_isalpha(const come_string_t* a);
 bool come_string_isalnum(const come_string_t* a);
 bool come_string_isspace(const come_string_t* a);
-bool come_string_utf8(const come_string_t* a);
+bool come_string_isascii(const come_string_t* a);
 
 // Transformation (allocates new string on parent context)
 come_string_t* come_string_upper(const come_string_t* a);
@@ -87,4 +89,5 @@ come_string_t* come_string_sprintf(TALLOC_CTX* ctx, const char* fmt, ...);
 // Conversions
 come_byte_array_t* come_string_to_byte_array(const come_string_t* a);
 
+long come_string_tol(const come_string_t* a);
 #endif // COME_STRING_MODULE_H

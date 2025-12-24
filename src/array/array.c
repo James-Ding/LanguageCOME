@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "array_module.h"
+#include "come_array.h"
 #include "mem/talloc.h"
 
 // Generic allocation

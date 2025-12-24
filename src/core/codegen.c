@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include "codegen_sym.h"
+#include <ctype.h>
 #include "codegen.h"
 #include "ast.h"
 
@@ -27,6 +29,10 @@ static int g_gen_line_map = 1;
 
 // Track current function return type for correct return statement generation
 static char current_function_return_type[128] = "";
+static char current_module[256] = "main"; // Default to main if unspecified
+static char* current_imports[256];
+static int current_import_count = 0;
+
 
 
 // Emit #line directive if needed
@@ -124,6 +130,10 @@ static void generate_expression(FILE* f, ASTNode* node) {
         fprintf(f, "%s", node->text);
     } else if (node->type == AST_IDENTIFIER) {
         fprintf(f, "%s", node->text);
+    } else if (node->type == AST_UNARY_OP) {
+        fprintf(f, "(%s", node->text);
+        generate_expression(f, node->children[0]);
+        fprintf(f, ")");
     } else if (node->type == AST_ARRAY_ACCESS) {
         // COME_ARR_GET(arr, index)
         fprintf(f, "COME_ARR_GET(");
@@ -131,6 +141,10 @@ static void generate_expression(FILE* f, ASTNode* node) {
         fprintf(f, ", ");
         generate_expression(f, node->children[1]);
         fprintf(f, ")");
+    } else if (node->type == AST_ASSIGN) {
+        generate_expression(f, node->children[0]);
+        fprintf(f, " %s ", node->text);
+        generate_expression(f, node->children[1]);
     } else if (node->type == AST_MEMBER_ACCESS) {
         // Special case: "data" access on "scaled"/"dyn"/"buf" array access -> just the value.
         // This fixes the issue where parser/codegen erroneously treats int/byte array access as needing .data
@@ -175,20 +189,188 @@ static void generate_expression(FILE* f, ASTNode* node) {
             strcmp(receiver->text, "net")==0 || 
             strcmp(receiver->text, "conv")==0 || 
             strcmp(receiver->text, "mem")==0 ||
-            strcmp(receiver->text, "std")==0)) {
+            strcmp(receiver->text, "std")==0 ||
+            strcmp(receiver->text, "ERR")==0)) {
             
             skip_receiver = 1;
             
             if (strcmp(receiver->text, "mem")==0 && strcmp(method, "cpy")==0) {
                  strcpy(c_func, "memcpy");
-             } else if (strcmp(receiver->text, "std")==0 && strcmp(method, "sprintf")==0) {
-                 strcpy(c_func, "come_string_sprintf"); // Assuming this exists or map to sprintf wrapper
              } else if (strcmp(receiver->text, "std")==0 && strcmp(method, "printf")==0) {
-                 strcpy(c_func, "printf"); // Should be AST_PRINTF but just in case
+                 strcpy(c_func, "printf"); 
+             } else if (strcmp(receiver->text, "ERR")==0 && strcmp(method, "no")==0) {
+                 strcpy(c_func, "come_errno_wrapper"); // macro or func
+             } else if (strcmp(receiver->text, "ERR")==0 && strcmp(method, "str")==0) {
+                 strcpy(c_func, "strerror(errno) //"); // hack to comment out paren? No, generates func(...)
+                 // We need proper handling. 
+                 // ERR.str() -> strerror(errno)
+                 // This expects function call syntax.
+                 // If I emit "strerror", args are empty?
+                 // ERR.str() is NO args. C strerror needs errno.
+                 // So I need to inject arg?
+                 // Or map to helper "come_strerror()".
+                 strcpy(c_func, "come_strerror");
              } else {
                  snprintf(c_func, sizeof(c_func), "come_%s_%s", receiver->text, method);
              }
         } 
+        // Detect std.out.printf / std.err.printf
+        else if (receiver->type == AST_MEMBER_ACCESS && 
+                 strcmp(receiver->children[0]->text, "std") == 0) {
+            
+             if (strcmp(receiver->text, "out") == 0 && strcmp(method, "printf") == 0) {
+                 strcpy(c_func, "fprintf");
+                 // Need to inject 'stdout' as first arg
+                 fprintf(f, "fprintf(stdout, ");
+                 skip_receiver = 1;
+                 // Loop args
+                 char* fmt_modified = NULL;
+                 int* bool_args = NULL;
+                 int arg_count = node->child_count;
+                 
+                 // Pre-scan for format string modification
+                 if (arg_count > 1 && node->children[1]->type == AST_STRING_LITERAL) {
+                     bool_args = calloc(arg_count + 1, sizeof(int)); // +1 safety
+                     char* raw_fmt = node->children[1]->text; 
+                     fmt_modified = calloc(strlen(raw_fmt) * 2 + 100, 1);
+                     
+                     char* src = raw_fmt;
+                     char* dst = fmt_modified;
+                     int current_arg_idx = 2; // Arrrgs buffer index (2, 3...)
+                     
+                     while (*src) {
+                         if (*src == '%' && *(src+1) != '%') {
+                             *dst++ = *src++; // Copy %
+                             
+                             // Flags
+                             while (*src && strchr("-+ #0", *src)) *dst++ = *src++;
+                             
+                             // Width
+                             if (*src == '*') { *dst++ = *src++; current_arg_idx++; }
+                             else while (*src && isdigit(*src)) *dst++ = *src++;
+                             
+                             // Precision
+                             if (*src == '.') {
+                                 *dst++ = *src++;
+                                 if (*src == '*') { *dst++ = *src++; current_arg_idx++; }
+                                 else while (*src && isdigit(*src)) *dst++ = *src++;
+                             }
+                             
+                             // Length
+                             while (*src && strchr("hljzL", *src)) *dst++ = *src++;
+                             
+                             // Specifier
+                             if (*src == 't') {
+                                 if (current_arg_idx < arg_count) bool_args[current_arg_idx] = 1;
+                                 *dst++ = 's'; // Replace with %s
+                                 src++;
+                             } else if (*src == 'T') {
+                                 if (current_arg_idx < arg_count) bool_args[current_arg_idx] = 2;
+                                 *dst++ = 's'; // Replace with %s
+                                 src++;
+                             } else {
+                                 if (*src) *dst++ = *src++;
+                             }
+                             current_arg_idx++;
+                         } else {
+                             if (*src == '%' && *(src+1) == '%') {
+                                 *dst++ = *src++; // Copy first %
+                                 *dst++ = *src++; // Copy second %
+                             } else {
+                                 *dst++ = *src++;
+                             }
+                         }
+                     }
+                     *dst = '\0';
+                 }
+
+                 for (int i = 1; i < node->child_count; i++) {
+                     if (i > 1) fprintf(f, ", ");
+                     
+                     if (i == 1 && fmt_modified) {
+                         fprintf(f, "%s", fmt_modified);
+                         continue;
+                     }
+                     
+                     if (bool_args && bool_args[i] != 0) {
+                         fprintf(f, "(");
+                         generate_expression(f, node->children[i]);
+                         if (bool_args[i] == 1) fprintf(f, " ? \"true\" : \"false\")");
+                         else fprintf(f, " ? \"TRUE\" : \"FALSE\")");
+                         continue;
+                     }
+                     
+                     ASTNode* arg = node->children[i];
+                     
+                     // Detect if arg is string-typed expression
+                     int is_str = 0;
+                     if (arg->type == AST_IDENTIFIER) {
+                         // Check known string variables
+                         const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in", "val"};
+                         for(int k=0; k<sizeof(str_vars)/sizeof(char*); k++) {
+                             if (strcmp(arg->text, str_vars[k]) == 0) is_str = 1;
+                         }
+                     } else if (arg->type == AST_METHOD_CALL || arg->type == AST_CALL) {
+                         // Check methods that return strings
+                         const char* str_methods[] = {"upper", "lower", "repeat", "replace", "trim", "ltrim", "rtrim", "substr", "join", "new", "str", "error"};
+                         const char* method_name = (arg->type == AST_METHOD_CALL) ? arg->text : arg->text; // Simplification
+                         for(int k=0; k<sizeof(str_methods)/sizeof(char*); k++) {
+                             if (strcmp(method_name, str_methods[k]) == 0) is_str = 1;
+                         }
+                     } else if (arg->type == AST_ARRAY_ACCESS) {
+                         // parts[0], groups[1] etc assuming array of strings
+                         ASTNode* arr = arg->children[0];
+                         if (arr->type == AST_IDENTIFIER) {
+                              if (strcmp(arr->text, "parts")==0 || strcmp(arr->text, "groups")==0 || strcmp(arr->text, "regex_parts")==0) {
+                                  is_str = 1;
+                              }
+                         }
+                     } else if (arg->type == AST_STRING_LITERAL) {
+                         generate_expression(f, arg); // string literal is perfectly %s safe (char*)
+                         continue;
+                     }
+
+                     if (is_str) {
+                         fprintf(f, "(");
+                         generate_expression(f, arg);
+                         fprintf(f, " ? ");
+                         generate_expression(f, arg);
+                         fprintf(f, "->data : \"NULL\")");
+                     } else {
+                         generate_expression(f, arg);
+                     }
+
+                 }
+                 fprintf(f, ")");
+                 return;
+             } else if (strcmp(receiver->text, "err") == 0 && strcmp(method, "printf") == 0) {
+                 strcpy(c_func, "fprintf");
+                 // Need to inject 'stderr' as first arg
+                 fprintf(f, "fprintf(stderr, ");
+                 skip_receiver = 1;
+                  // Loop args
+                 for (int i = 1; i < node->child_count; i++) {
+                     if (i > 1) fprintf(f, ", ");
+                     ASTNode* arg = node->children[i];
+                     if (arg->type == AST_IDENTIFIER) {
+                         const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in"};
+                         int is_str = 0;
+                         for(int k=0; k<sizeof(str_vars)/sizeof(char*); k++) {
+                             if (strcmp(arg->text, str_vars[k]) == 0) is_str = 1;
+                         }
+                         if (is_str) {
+                             fprintf(f, "(%s ? %s->data : \"NULL\")", arg->text, arg->text);
+                         } else {
+                             generate_expression(f, arg);
+                         }
+                     } else {
+                         generate_expression(f, arg);
+                     }
+                 }
+                 fprintf(f, ")");
+                 return;
+             }
+        }
         // Detect net.tls calls
         else if (receiver->type == AST_MEMBER_ACCESS &&
             strcmp(receiver->text, "tls") == 0 &&
@@ -261,21 +443,22 @@ static void generate_expression(FILE* f, ASTNode* node) {
                  strcmp(method, "find") == 0 || strcmp(method, "rfind") == 0 || strcmp(method, "count") == 0 ||
                  strcmp(method, "chr") == 0 || strcmp(method, "rchr") == 0 || strcmp(method, "memchr") == 0 ||
                  strcmp(method, "isdigit") == 0 || strcmp(method, "isalpha") == 0 || 
-                 strcmp(method, "isalnum") == 0 || strcmp(method, "isspace") == 0 || strcmp(method, "utf8") == 0 ||
+                 strcmp(method, "isalnum") == 0 || strcmp(method, "isspace") == 0 || strcmp(method, "isascii") == 0 ||
                  strcmp(method, "repeat") == 0 || strcmp(method, "split_n") == 0 ||
                  strcmp(method, "regex") == 0 || strncmp(method, "regex_", 6) == 0 ||
                  strcmp(method, "chown") == 0 ||
+                 strcmp(method, "tol") == 0 ||
                  strcmp(method, "byte_array") == 0) {
                  
-            if (strcmp(method, "length") == 0) strcpy(c_func, "come_string_list_len"); // Wait, length is list len? come uses len for string?
-            // "args.length()" -> args is string[].
-            // "s.len()" -> s is string.
-            // Ambiguous. Check receiver?
-            // If method is len -> string. If length -> list/string?
-            // Existing code mapped length->list_len, len->string_len. Keep it.
-            else if (strcmp(method, "len") == 0) strcpy(c_func, "come_string_len");
-            else if (strcmp(method, "byte_array") == 0) strcpy(c_func, "come_string_to_byte_array");
+            if (strcmp(method, "length") == 0) strcpy(c_func, "come_string_list_len"); 
+            else if (strcmp(method, "tol") == 0) strcpy(c_func, "come_string_tol");
             else snprintf(c_func, sizeof(c_func), "come_string_%s", method);
+
+             // Check receiver type
+             // If receiver is NOT string type (based on local var), maybe it's list?
+             // But for now assume string methods called on strings.
+             // Special case: args (list)
+             
         }
         // Detect Array methods
         else if (strcmp(method, "size") == 0 || strcmp(method, "resize") == 0 || strcmp(method, "free") == 0 || strcmp(method, "slice") == 0) {
@@ -285,6 +468,46 @@ static void generate_expression(FILE* f, ASTNode* node) {
              else snprintf(c_func, sizeof(c_func), "come_array_%s", method);
         }
         else {
+             // User defined struct method?
+             // Try to resolve receiver variable type
+             ASTNode* receiver = node->children[0];
+             char struct_name[64] = "";
+             if (receiver->type == AST_IDENTIFIER) {
+                 const char* type = get_local_variable_type(receiver->text);
+                 if (type) {
+                     if (strncmp(type, "struct ", 7) == 0) {
+                         strcpy(struct_name, type + 7);
+                     } else {
+                         strcpy(struct_name, type);
+                     }
+                 }
+             }
+
+             if (struct_name[0]) {
+                 // Found struct type: generate Struct_Method(&receiver, ...)
+                 // New rule: come_MMM__SSS__FFF
+                 fprintf(f, "come_%s__%s__%s(", current_module, struct_name, method);
+                 // Need address of receiver if it is a struct value
+                 // If receiver is a pointer?
+                 // Current logic: we only track "struct Rect" -> we need &?
+                 // Yes, "struct Rect r" -> &r passed to "Rect_area(Rect* self)".
+                 // If "Rect* r" -> r passed.
+                 // Our tracker should distinguish?
+                 // For now assume stack structs need &.
+                 const char* full_type = get_local_variable_type(receiver->text);
+                 if (strstr(full_type, "*") == NULL) {
+                     fprintf(f, "&");
+                 }
+                 generate_expression(f, receiver);
+                 // Args
+                 for (int i = 1; i < node->child_count; i++) {
+                     fprintf(f, ", ");
+                     generate_expression(f, node->children[i]);
+                 }
+                 fprintf(f, ")");
+                 return;
+             }
+
             // Generic method: method(receiver, ...)
             // e.g. nport(addr)
             strcpy(c_func, method);
@@ -297,7 +520,7 @@ static void generate_expression(FILE* f, ASTNode* node) {
         
         // Append ctx for specific functions?
         if (strcmp(c_func, "come_string_sprintf") == 0) {
-            fprintf(f, "come_global_ctx");
+            fprintf(f, "COME_CTX");
             first_arg = 0;
         }
 
@@ -388,6 +611,38 @@ static void generate_expression(FILE* f, ASTNode* node) {
         }
         if ((strcmp(method, "trim") == 0 || strcmp(method, "ltrim") == 0 || strcmp(method, "rtrim") == 0) && node->child_count == 1) {
             fputs(", NULL", f);
+        }
+        fprintf(f, ")");
+    } else if (node->type == AST_CALL) {
+        // Function call: func(args)
+        // node->text is function name (e.g. "print", "foo")
+        
+        // Aliases like printf are replaced by parser? 
+        // If parser alias replacement happens, node->text might be std_out_printf?
+        // Wait, parser alias substitution replaces the node or text.
+        // If it's a known C function alias (e.g. printf), we might NOT want to mangle it if it's meant to be C.
+        // BUT user said "translate come function to C".
+        // Standard lib functions...
+        // If I call `add(1,2)`, it should become `come_main__add(1,2)`.
+        // If I call `printf`, and `printf` is aliased to `std.out.printf`.
+        // `std` module functions should be `come_std__...`?
+        // `printf` is usually a macro or extern.
+        // The parser handles alias.
+        
+        char mangled_name[8192];
+        // Heuristic: if contains '.', it's fully qualified? No, AST_CALL text usually simple.
+        // If it starts with "come_", assume already mangled/internal?
+        if (strncmp(node->text, "come_", 5) == 0 || strncmp(node->text, "std_", 4) == 0) {
+             strcpy(mangled_name, node->text);
+        } else {
+             // Local function call
+             snprintf(mangled_name, sizeof(mangled_name), "come_%s__%s", current_module, node->text);
+        }
+        
+        fprintf(f, "%s(", mangled_name);
+        for (int i = 0; i < node->child_count; i++) {
+            if (i > 0) fprintf(f, ", ");
+            generate_expression(f, node->children[i]);
         }
         fprintf(f, ")");
     } else if (node->type == AST_AGGREGATE_INIT) {
@@ -481,7 +736,6 @@ static void generate_program(FILE* f, ASTNode* node) {
 static void generate_node(FILE* f, ASTNode* node, int indent) {
     if (!node) return;
     
-    
     switch (node->type) {
         case AST_PROGRAM:
             generate_program(f, node);
@@ -495,6 +749,19 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
       case AST_FUNCTION: {
         // [RetType] [Name] [Args...] [Block/Body]
         emit_line_directive(f, node);
+
+        reset_local_variables();
+        // Register arguments
+        // Children: 0=ret, 1..=args (until block)
+        for (int i = 1; i < node->child_count; i++) {
+             ASTNode* child = node->children[i];
+             if (child->type == AST_VAR_DECL) {
+                 if (child->child_count > 1) {
+                     add_local_variable(child->text, child->children[1]->text);
+                 }
+             }
+             if (child->type == AST_BLOCK) break;
+        }
         
         ASTNode* ret_type = node->children[0];
         int body_idx = node->child_count - 1;
@@ -507,12 +774,45 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         }
         
         int is_main = (strcmp(node->text, "main") == 0);
-        char func_name[256];
-        if (is_main) {
-             strcpy(func_name, "_come_user_main");
+        char func_name[8192];
+        // Rule: come_MMM__FFF
+        if (is_main && strcmp(current_module, "main") == 0) {
+             // Main function in main module -> come_main__main
+             // But we need to make sure our entry point knows this.
+             // Existing entry point calls _come_user_main.
+             // We will change that entry point to call come_main__main.
+             snprintf(func_name, sizeof(func_name), "come_%s__%s", current_module, node->text);
         } else {
-             strcpy(func_name, node->text);
+             snprintf(func_name, sizeof(func_name), "come_%s__%s", current_module, node->text);
         }
+        
+        // Check for Struct Method mangling (Struct_Method)
+        // If the parser already mangled it to Struct_Method, we need to convert to come_MMM__Struct__Method
+        // Wait, parser does mangle Struct.Method -> Struct_Method.
+        // But the user wants: come_MMM__SSS__FFF
+        // So if name contains '_', split it?
+        // Parser mangles `Rect.area` -> `Rect_area`.
+        // We should check if it looks like a struct method.
+        // We can't be 100% sure just by name, but assuming convention.
+        // Actually, for AST_FUNCTION, `node->text` is the function name.
+        // If it was `Rect.area`, parser made it `Rect_area`.
+        // Let's replace the first '_' with '__'.
+        // No, user wants come_MMM__SSS__FFF.
+        // If node->text is "Rect_area", we want "come_MMM__Rect__area".
+        // Let's see if we can detect it.
+        char* underscore = strchr(node->text, '_');
+        if (strcmp(node->text, "module_init") == 0) {
+             snprintf(func_name, sizeof(func_name), "come_%s__init", current_module);
+        } else if (underscore && !is_main && isupper(node->text[0])) {
+            // Struct method: first char is uppercase (e.g., "Rect_area")
+            // Convert "Rect_area" -> "come_MMM__Rect__area"
+            long prefix_len = underscore - node->text;
+            snprintf(func_name, sizeof(func_name), "come_%s__%.*s__%s", current_module, (int)prefix_len, node->text, underscore + 1);
+        } else {
+             // Regular function (including those with underscores like "demo_types")
+             snprintf(func_name, sizeof(func_name), "come_%s__%s", current_module, node->text);
+        }
+
 
         emit_indent(f, indent);
         
@@ -527,7 +827,11 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         if (strcmp(node->text, "nport") == 0) {
             fprintf(f, "struct TCP_ADDR* self");
             has_args = 1;
+        } else if (strcmp(node->text, "module_init") == 0) {
+            fprintf(f, "TALLOC_CTX* ctx");
+            has_args = 1;
         }
+
         
         // Iterate manual args
         for (int i = 1; i < body_idx; i++) {
@@ -570,43 +874,23 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
         ASTNode* body = node->children[body_idx];
         if (body->type == AST_BLOCK) {
             fprintf(f, " {\n");
+            if (strcmp(node->text, "module_init") == 0) {
+                fprintf(f, "    COME_CTX = ctx;\n");
+                for (int i=0; i<current_import_count; i++) {
+                    fprintf(f, "    come_%s__ctx = ctx;\n", current_imports[i]);
+                }
+            }
+
             
             for (int i = 0; i < body->child_count; i++) {
                 generate_node(f, body->children[i], indent + 4);
             }
-            
+            emit_indent(f, indent);
             fprintf(f, "}\n");
-            
-            // If main, generate the wrapper now
-            if (is_main) {
-                fprintf(f, "\n/* Main Wrapper */\n");
-                fprintf(f, "int main(int argc, char* argv[]) {\n");
-                fprintf(f, "    come_global_ctx = mem_talloc_new_ctx(NULL);\n");
-                
-                // Check if we need to convert args
-                int needs_args = 0;
-                for (int i = 1; i < body_idx; i++) {
-                     ASTNode* arg = node->children[i];
-                     if (arg->type == AST_VAR_DECL && strncmp(arg->text, "args", 4) == 0) {
-                         needs_args = 1;
-                         break;
-                     }
-                }
-                
-                if (needs_args) {
-                    fprintf(f, "    come_string_list_t* args = come_string_list_from_argv(come_global_ctx, argc, argv);\n");
-                    fprintf(f, "    int ret = _come_user_main(args);\n");
-                } else {
-                    fprintf(f, "    int ret = _come_user_main();\n");
-                }
-                
-                fprintf(f, "    mem_talloc_free(come_global_ctx);\n");
-                fprintf(f, "    return ret;\n");
-                fprintf(f, "}\n");
-            }
         } else {
             fprintf(f, ";\n");
         }
+
         
         return;
     }
@@ -621,6 +905,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
     case AST_VAR_DECL: {
         emit_line_directive(f, node);  // Emit #line for variable declaration
         ASTNode* type_node = node->children[1];
+        add_local_variable(node->text, type_node->text);
 
         ASTNode* init_expr = node->children[0];
         
@@ -628,7 +913,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             if (strcmp(type_node->text, "string") == 0) {
                 fprintf(f, "come_string_t* %s = ", node->text);
                 if (init_expr->type == AST_STRING_LITERAL) {
-                    fprintf(f, "come_string_new(come_global_ctx, ");
+                    fprintf(f, "come_string_new(COME_CTX, ");
                     generate_expression(f, init_expr);
                     fprintf(f, ")");
                 } else {
@@ -638,7 +923,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             } else if (strcmp(type_node->text, "string[]") == 0) {
                 fprintf(f, "come_string_list_t* %s = ", node->text);
                 if (init_expr->type == AST_STRING_LITERAL && strcmp(init_expr->text, "\"__ARGS__\"") == 0) {
-                    fprintf(f, "come_string_list_from_argv(come_global_ctx, argc, argv)");
+                    fprintf(f, "come_string_list_from_argv(COME_CTX, argc, argv)");
                 } else {
                     generate_expression(f, init_expr);
                 }
@@ -653,7 +938,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             } else if (strcmp(type_node->text, "var") == 0) {
                 // Type inference
                 if (init_expr->type == AST_STRING_LITERAL) {
-                    fprintf(f, "come_string_t* %s = come_string_new(come_global_ctx, ", node->text);
+                    fprintf(f, "come_string_t* %s = come_string_new(COME_CTX, ", node->text);
                     generate_expression(f, init_expr);
                     fprintf(f, ");\n");
                 } else {
@@ -687,7 +972,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                         int count = init_expr->child_count;
                         int alloc_count = (fixed_size > count) ? fixed_size : count;
                         
-                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(come_global_ctx, sizeof(uint32_t)*2 + %d * sizeof(%s));\n", 
+                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(COME_CTX, sizeof(uint32_t)*2 + %d * sizeof(%s));\n", 
                                 arr_type, node->text, arr_type, alloc_count, elem_type);
                         emit_indent(f, indent);
                         fprintf(f, "%s->size = %d; %s->count = %d;\n", node->text, alloc_count, node->text, count);
@@ -701,7 +986,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                         generate_expression(f, init_expr);
                         fprintf(f, ";\n");
                     } else if (fixed_size > 0) {
-                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(come_global_ctx, sizeof(uint32_t)*2 + %d * sizeof(%s));\n", 
+                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(COME_CTX, sizeof(uint32_t)*2 + %d * sizeof(%s));\n", 
                                 arr_type, node->text, arr_type, fixed_size, elem_type);
                         emit_indent(f, indent);
                         fprintf(f, "memset(%s->items, 0, %d * sizeof(%s));\n", node->text, fixed_size, elem_type);
@@ -709,7 +994,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                         fprintf(f, "%s->size = %d; %s->count = %d;\n", node->text, fixed_size, node->text, fixed_size);
                     } else {
                         // Empty dynamic
-                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(come_global_ctx, sizeof(uint32_t)*2);\n", arr_type, node->text, arr_type);
+                        fprintf(f, "%s* %s = (%s*)mem_talloc_alloc(COME_CTX, sizeof(uint32_t)*2);\n", arr_type, node->text, arr_type);
                         emit_indent(f, indent);
                         fprintf(f, "%s->size = 0; %s->count = 0;\n", node->text, node->text);
                     }
@@ -727,8 +1012,8 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                          // Just emit the aggregate initializer as-is for structs
                          generate_expression(f, init_expr);
                      } else if (init_expr && init_expr->type == AST_NUMBER && strcmp(init_expr->text, "0") == 0) {
-                          // Check if type is struct?
-                          if (strncmp(type_node->text, "struct", 6) == 0) {
+                          // Check if type is struct or union?
+                          if (strncmp(type_node->text, "struct", 6) == 0 || strncmp(type_node->text, "union", 5) == 0) {
                               fprintf(f, "{0}");
                           } else {
                               generate_expression(f, init_expr);
@@ -754,7 +1039,7 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
                 if (arg->type == AST_STRING_LITERAL) {
                     emit_c_string_literal(f, arg->text);
                 } else if (arg->type == AST_IDENTIFIER) {
-                     const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp"};
+                     const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in"};
                      int is_str = 0;
                      for(int k=0; k<sizeof(str_vars)/sizeof(char*); k++) {
                          if (strcmp(arg->text, str_vars[k]) == 0) is_str = 1;
@@ -1144,6 +1429,16 @@ static void generate_node(FILE* f, ASTNode* node, int indent) {
             break;
         }
 
+        case AST_BREAK: {
+            emit_indent(f, indent);
+            fprintf(f, "break;\n");
+            break;
+        }
+        case AST_CONTINUE: {
+            emit_indent(f, indent);
+            fprintf(f, "continue;\n");
+            break;
+        }
         default:
             break;
     }
@@ -1164,37 +1459,109 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
     // Reset seen structs tracker
     for (int i=0; i<seen_count; i++) free(seen_structs[i]);
     seen_count = 0;
+    
+    // Reset imports tracker
+    for (int i=0; i<current_import_count; i++) free(current_imports[i]);
+    current_import_count = 0;
+
+    // First collect imports and module name
+    if (ast->type == AST_PROGRAM) {
+        if (ast->text[0] != 0) strcpy(current_module, ast->text);
+        for (int i=0; i<ast->child_count; i++) {
+            if (ast->children[i]->type == AST_IMPORT) {
+                current_imports[current_import_count++] = strdup(ast->children[i]->text);
+            }
+        }
+    }
+
 
     fprintf(f, "#include <stdio.h>\n");
     fprintf(f, "#include <string.h>\n");
     fprintf(f, "#include <stdbool.h>\n");
     fprintf(f, "#include <stdint.h>\n");
-    fprintf(f, "#include \"string_module.h\"\n");
-    fprintf(f, "#include \"array_module.h\"\n");
+    fprintf(f, "#include \"come_string.h\"\n");
+    fprintf(f, "#include \"come_array.h\"\n");
+    fprintf(f, "#include \"come_types.h\"\n");
     fprintf(f, "#include \"mem/talloc.h\"\n");
+    fprintf(f, "#include <errno.h>\n");
+    fprintf(f, "#define come_errno_wrapper() (errno)\n");
+    fprintf(f, "static const char* come_strerror() { return strerror(errno); }\n");
     // Auto-include headers for simple modules detection
     // In a real compiler this would be driven by the symbol table/imports
     fprintf(f, "#include \"net/tls.h\"\n");
     fprintf(f, "#include \"net/http.h\"\n");
     // Macros for method dispatch
-    fprintf(f, "#define come_call_accept(x) _Generic((x), net_tls_listener*: net_tls_accept((net_tls_listener*)(x)))\n\n");
+    fprintf(f, "#define come_call_accept(x) _Generic((x), net_tls_listener*: net_tls_accept((net_tls_listener*)(x)))\n");
+    fprintf(f, "#define COME_CTX come_%s__ctx\n\n", current_module);
     
-    fprintf(f, "typedef int8_t byte;\n");
-    fprintf(f, "typedef int8_t i8;\n");
-    fprintf(f, "typedef uint8_t ubyte;\n");
-    fprintf(f, "typedef uint8_t u8;\n");
-    fprintf(f, "typedef int16_t i16;\n");
-    fprintf(f, "typedef uint16_t ushort;\n");
-    fprintf(f, "typedef uint16_t u16;\n");
-    fprintf(f, "typedef int32_t i32;\n");
-    fprintf(f, "typedef uint32_t uint;\n");
-    fprintf(f, "typedef uint32_t u32;\n");
-    fprintf(f, "typedef int64_t i64;\n");
-    fprintf(f, "typedef uint64_t ulong;\n");
-    fprintf(f, "typedef uint64_t u64;\n");
-    fprintf(f, "typedef float f32;\n");
-    fprintf(f, "typedef double f64;\n");
-    fprintf(f, "typedef int32_t wchar;\n");
+    // Module memory context
+    fprintf(f, "TALLOC_CTX* come_%s__ctx = NULL;\n", current_module);
+    
+    // TODO: Extern imports - disabled for now to avoid linker errors
+    // for (int i=0; i<current_import_count; i++) {
+    //     fprintf(f, "extern TALLOC_CTX* come_%s__ctx;\n", current_imports[i]);
+    // }
+
+    // Only generate main if it's not a base module
+    if (strcmp(current_module, "std") != 0 && strcmp(current_module, "string") != 0) {
+
+        // Scan AST to find main function and check if it has parameters
+        int main_has_params = 0;
+        fprintf(stderr, "DEBUG: Scanning AST for main function (child_count=%d)\n", ast->child_count);
+        for (int i = 0; i < ast->child_count; i++) {
+            ASTNode* child = ast->children[i];
+            if (child) {
+                fprintf(stderr, "DEBUG: Child %d: type=%d, text='%s'\n", i, child->type, child->text);
+            }
+            if (child && child->type == AST_FUNCTION && strcmp(child->text, "main") == 0) {
+                fprintf(stderr, "DEBUG: Found main function! child_count=%d\n", child->child_count);
+                // Check if main has any arguments
+                // Arguments are in children[1] if present
+                if (child->child_count > 1 && child->children[1]) {
+                    ASTNode* args_node = child->children[1];
+                    fprintf(stderr, "DEBUG: Args node child_count=%d\n", args_node->child_count);
+                    if (args_node->child_count > 0) {
+                        main_has_params = 1;
+                    }
+                }
+                break;
+            }
+        }
+        fprintf(stderr, "DEBUG: main_has_params=%d\n", main_has_params);
+
+        // Forward declare user main with correct signature
+        if (main_has_params) {
+            fprintf(f, "int come_%s__main(come_string_list_t* args);\n", current_module);
+        } else {
+            fprintf(f, "int come_%s__main(void);\n", current_module);
+        }
+        
+        fprintf(f, "\nint main(int argc, char* argv[]) {\n");
+        fprintf(f, "    COME_CTX = mem_talloc_new_ctx(NULL);\n");
+        fprintf(f, "    if (!COME_CTX) { fprintf(stderr, \"OOM\\n\"); return 1; }\n");
+        
+        // TODO: Handle imported contexts and module init
+        // For now, skip these to avoid linker errors
+        
+        fprintf(f, "    \n");
+        
+        if (main_has_params) {
+            fprintf(f, "    // Convert argv to string[]\n");
+            fprintf(f, "    come_string_list_t* args = come_string_list_from_argv(COME_CTX, argc, argv);\n");
+            fprintf(f, "    \n");
+            fprintf(f, "    // Call user main\n");
+            fprintf(f, "    int ret = come_%s__main(args);\n", current_module);
+        } else {
+            fprintf(f, "    // Call user main (no args)\n");
+            fprintf(f, "    int ret = come_%s__main();\n", current_module);
+        }
+        
+        fprintf(f, "    \n");
+        fprintf(f, "    mem_talloc_free(COME_CTX);\n");
+        fprintf(f, "    return ret;\n");
+        fprintf(f, "}\n");
+    }
+    // Map type (not in come_types.h as it's a special case)
     fprintf(f, "typedef void* map;\n");
 
     fprintf(f, "#include <math.h>\n");
@@ -1214,7 +1581,8 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
     
 
     fprintf(f, "/* Runtime Preamble additions */\n");
-    fprintf(f, "TALLOC_CTX* come_global_ctx = NULL;\n");
+
+    
     fprintf(f, "#define come_std_eprintf(...) fprintf(stderr, __VA_ARGS__)\n");
 
     // Pass -1: Aliases (typedefs)
@@ -1223,6 +1591,13 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
         ASTNode* child = ast->children[i];
         if (child->type == AST_TYPE_ALIAS) {
              printf("DEBUG: Generating Alias %s\n", child->text);
+             
+             // Hack: Skip FILE as it causes conflict with stdio.h
+             if (strcmp(child->text, "FILE") == 0) {
+                 mark_struct_seen("FILE");
+                 continue;
+             }
+
              emit_line_directive(f, child);
              if (!is_struct_seen(child->text)) {
                  fprintf(f, "typedef %s %s;\n", child->children[0]->text, child->text);
@@ -1279,14 +1654,31 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
              // Simple loop:
              if (child->child_count > 0 && child->children[0]->type != AST_BLOCK) {
                   ASTNode* ret = child->children[0];
-                  if (ret->text[0] == '(') {
-                       fprintf(f, "void %s(", child->text);
+                  
+                  char func_name[8192];
+                  int is_main = (strcmp(child->text, "main") == 0);
+                  char* underscore = strchr(child->text, '_');
+                  if (underscore && !is_main && isupper(child->text[0])) {
+                      // Struct method: first char is uppercase
+                      long prefix_len = underscore - child->text;
+                      snprintf(func_name, sizeof(func_name), "come_%s__%.*s__%s", current_module, (int)prefix_len, child->text, underscore + 1);
                   } else {
-                       if (strcmp(ret->text, "string") == 0) fprintf(f, "come_string_t* %s(", child->text);
-                       else fprintf(f, "%s %s(", ret->text, child->text);
+                      // Regular function
+                      snprintf(func_name, sizeof(func_name), "come_%s__%s", current_module, child->text);
+                  }
+
+                  if (ret->text[0] == '(') {
+                       fprintf(f, "void %s(", func_name);
+                  } else {
+                       if (strcmp(ret->text, "string") == 0) fprintf(f, "come_string_t* %s(", func_name);
+                       else fprintf(f, "%s %s(", ret->text, func_name);
                   }
              } else {
-                  fprintf(f, "void %s(", child->text);
+                  // Fallback for void return without explicit type? or AST_FUNCTION without children?
+                  // Should check if we have mangled name logic here too just in case
+                  char func_name[8192];
+                  snprintf(func_name, sizeof(func_name), "come_%s__%s", current_module, child->text);
+                  fprintf(f, "void %s(", func_name);
              }
              // Args?
              // Iterate children until AST_BLOCK
@@ -1307,21 +1699,21 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
                  if (arg->type == AST_VAR_DECL) {
                      ASTNode* type = arg->children[1];
                      // Array check
-                      if (strstr(type->text, "[]")) {
-                           char raw[64];
-                           strncpy(raw, type->text, strlen(type->text)-2);
-                           raw[strlen(type->text)-2] = 0;
-                           
-                           if (strcmp(raw, "int")==0) fprintf(f, "come_int_array_t*");
-                           else if (strcmp(raw, "byte")==0) fprintf(f, "come_byte_array_t*");
-                           else if (strcmp(raw, "string")==0) fprintf(f, "come_string_list_t*");
-                           else fprintf(f, "come_array_t*");
-                      } else if (type->text[0] == '(') {
-                           fprintf(f, "void"); // Multi-return hack
-                      } else {
-                           if (strcmp(type->text, "string")==0) fprintf(f, "come_string_t*");
-                           else fprintf(f, "%s", type->text);
-                      }
+                       if (strstr(type->text, "[]")) {
+                            char raw[64];
+                            strncpy(raw, type->text, strlen(type->text)-2);
+                            raw[strlen(type->text)-2] = 0;
+                            
+                            if (strcmp(raw, "int")==0) fprintf(f, "come_int_array_t*");
+                            else if (strcmp(raw, "byte")==0) fprintf(f, "come_byte_array_t*");
+                            else if (strcmp(raw, "string")==0) fprintf(f, "come_string_list_t*");
+                            else fprintf(f, "come_array_t*");
+                       } else if (type->text[0] == '(') {
+                            fprintf(f, "void"); // Multi-return hack
+                       } else {
+                            if (strcmp(type->text, "string")==0) fprintf(f, "come_string_t*");
+                            else fprintf(f, "%s", type->text);
+                       }
                   } else {
                      fprintf(f, "void*"); // Fallback
                  }
@@ -1332,6 +1724,9 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
     }
 
     if (ast->type == AST_PROGRAM) {
+        if (ast->text[0] != 0) {
+            strncpy(current_module, ast->text, 255);
+        }
         generate_program(f, ast);
     } else {
         generate_node(f, ast, 0);

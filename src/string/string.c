@@ -1,4 +1,4 @@
-#include "string_module.h"
+#include "come_string.h"
 #include "mem/talloc.h"
 #include <string.h>
 #include <ctype.h>
@@ -169,24 +169,13 @@ bool come_string_isspace(const come_string_t* a) {
     return true;
 }
 
-bool come_string_utf8(const come_string_t* a) {
-    // Basic UTF-8 validation
+bool come_string_isascii(const come_string_t* a) {
+    if (!a) return false;
+    // Check if high bit is set
     const unsigned char* bytes = (const unsigned char*)a->data;
     while (*bytes) {
-        if (*bytes < 0x80) {
-            bytes++;
-        } else if ((*bytes & 0xE0) == 0xC0) {
-            if ((bytes[1] & 0xC0) != 0x80) return false;
-            bytes += 2;
-        } else if ((*bytes & 0xF0) == 0xE0) {
-            if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80) return false;
-            bytes += 3;
-        } else if ((*bytes & 0xF8) == 0xF0) {
-            if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80 || (bytes[3] & 0xC0) != 0x80) return false;
-            bytes += 4;
-        } else {
-            return false;
-        }
+        if (*bytes & 0x80) return false;
+        bytes++;
     }
     return true;
 }
@@ -665,4 +654,9 @@ come_string_t* come_string_at(const come_string_t* a, size_t index) {
     }
     
     return NULL; // Out of bounds
+}
+
+long come_string_tol(const come_string_t* a) {
+    if (!a || !a->data) return 0;
+    return strtol(a->data, NULL, 10);
 }
