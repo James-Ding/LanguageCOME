@@ -152,16 +152,15 @@ Trailing commas are allowed.
 Come uses `enum` as a value generator within `const` blocks.
 
 ```come
-const ( RED = enum, YELLOW, GREEN, UNKNOWN )
-```
-
-Explicit starting value:
-
-```come
-const (
-    b_alpha = enum(100),
-    b_beta,
-    b_delta,
+const ( 
+    RED = enum, 
+    YELLOW, 
+    GREEN, 
+    UNKNOWN,
+//Explicit starting value:
+    HL_RED = enum(8),
+    HL_YELLOW,
+    HL_GREEN
 )
 ```
 
@@ -178,7 +177,6 @@ The `alias` keyword provides C-like typedef and macro behavior.
 alias tcpport_t = ushort
 alias Point = struct Point
 ```
-
 ## 5.2 Constant Alias (Define)
 
 ```come
@@ -464,23 +462,67 @@ export (PI, Point, add)
 | Methods | Object-style |
 | Compatibility | C mental model |
 
-# 16. Built-in Global Objects
+# 16. Come Language Keywords
 
-Come provides a few built-in global objects that are available without explicit import.
+Below is the definitive list of keywords currently utilized by the **Come** parser and lexer.
 
-## 16.1 ERR Object
+## 1. Program Structure & Scope
+These keywords manage the modularity, visibility, and declaration patterns of the source code.
 
-The `ERR` object provides access to system error codes and messages, replacing C's `errno`, `strerror`, and `perror`.
+| Keyword | Description |
+| :--- | :--- |
+| `module` | Defines the current source file's namespace. |
+| `main` | Entry point of the program. |
+| `import` | Declaration for accessing external modules. |
+| `export` | Marks variables, types, or functions as public. |
+| `alias` | Unified syntax for type aliasing and macro defines. |
+| `const` | Declares immutable values or enumerations. |
+| `enum` | Declares incremental constant sets with `const`. |
 
-| Method | Description |
-|---|---|
-| `ERR.no()` | Returns the last system error code (int). 0 means no error. |
-| `ERR.str()` | Returns the error message string for the current error code. |
+## 2. Type System
+Come uses a robust type system ranging from low-level primitives to high-level managed objects.
 
-Example:
+### Primitives & Objects
+* **Special**: `void`, `bool`
+* **Local inference**: `var` (Enables local type inference)
+* **Managed**: `string`, `map`, array in T v[] format (Headered Buffer objects)
+* **Character**: `wchar` (Unicode support)
 
-```come
-if (ERR.no() != 0) {
-    std.err.printf("Error: %s\n", ERR.str())
-}
-```
+### Integer Types
+| Signed | Unsigned | Alias |
+| :--- | :--- | :--- |
+| `byte` | `ubyte` | `i8` / `u8` |
+| `short` | `ushort` | `i16` / `u16` |
+| `int` | `uint` | `i32` / `u32` |
+| `long` | `ulong` | `i64` / `u64` |
+
+### Floating Point
+* `float` (f32)
+* `double` (f64)
+
+### Composite & Behavioral Types
+* `struct`: Composite data structure.
+* `union`: Overlapping memory structure.
+
+## 3. Control Flow
+Standard procedural logic enhanced with explicit safety keywords.
+
+### Selection
+* `if`, `else`
+* `switch`, `case`, `default`
+* `fallthrough` (Explicit case bleeding)
+
+### Iteration
+* `for`
+* `while`
+* `do`
+* `break`
+* `continue`
+
+### Subroutine
+* `return` (Supports multiple return values)
+
+## 4. Values
+* `true`, `false`
+* `null`
+

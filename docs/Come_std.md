@@ -255,6 +255,26 @@ Example:
 
 ---
 
+# 16. Built-in Global Objects
+
+Come provides a few built-in global objects that are available without explicit import.
+
+## 16.1 ERR Object
+
+The `ERR` object provides access to system error codes and messages, replacing C's `errno`, `strerror`, and `perror`.
+
+| Method | Description |
+|---|---|
+| `ERR.no()` | Returns the last system error code (int). 0 means no error. |
+| `ERR.str()` | Returns the error message string for the current error code. |
+
+Example:
+
+```come
+if (ERR.no() != 0) {
+    std.err.printf("Error: %s\n", ERR.str())
+}
+```
 ## 7. Guarantees
 
 - **No Leaks:** Compiler ensures `.exit()` runs.

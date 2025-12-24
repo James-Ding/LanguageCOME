@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "string_module.h"
+#include "come_string.h"
 #include "mem/talloc.h"
 
 void test_basic() {

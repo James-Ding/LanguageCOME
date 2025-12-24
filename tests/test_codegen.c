@@ -10,13 +10,13 @@ int main() {
     ASTNode* root = NULL;
     // parse_file currently returns a hardcoded AST, so the input file doesn't matter much
     // but we need it to succeed.
-    if (parse_file("tests/test_files/hello.co", &root) != 0) {
+    if (parse_file("examples/hello.co", &root) != 0) {
         printf("Parser failed\n");
         return 1;
     }
 
     const char* out_file = "build/tests/test_output.c";
-    if (generate_c_from_ast(root, out_file, "tests/test_files/hello.co") != 0) {
+    if (generate_c_from_ast(root, out_file, "examples/hello.co", 0) != 0) {
         printf("Codegen failed\n");
         return 1;
     }

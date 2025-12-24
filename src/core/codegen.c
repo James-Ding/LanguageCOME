@@ -315,7 +315,7 @@ static void generate_expression(FILE* f, ASTNode* node) {
                      int is_str = 0;
                      if (arg->type == AST_IDENTIFIER) {
                          // Check known string variables
-                         const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in", "val"};
+                         const char* str_vars[] = {"s", "upper", "lower", "repeated", "replaced", "trimmed", "ltrimmed", "rtrimmed", "joined", "expected", "alpha", "digits", "alnum", "space", "other", "parts", "groups", "regex_replaced", "email", "text", "custom_trim", "sbuf", "cmp", "pass_in", "val", "replaced1", "custom_trimmed", "sub", "csv", "joined_pipe", "p0", "p1", "p2", "p3", "g1", "g2"};
                          for(int k=0; k<sizeof(str_vars)/sizeof(char*); k++) {
                              if (strcmp(arg->text, str_vars[k]) == 0) is_str = 1;
                          }

@@ -5,7 +5,7 @@
 
 int main() {
     ASTNode* root = NULL;
-    if (parse_file("dummy.co", &root) != 0) {
+    if (parse_file("examples/hello.co", &root) != 0) {
         printf("Parser failed\n");
         return 1;
     }
@@ -21,14 +21,17 @@ int main() {
     }
 
     // Check for main function
-    if (root->child_count < 1 || root->children[0]->type != AST_FUNCTION) {
-        printf("Missing main function\n");
-        return 1;
+    int found_main = 0;
+    for (int i = 0; i < root->child_count; i++) {
+        ASTNode* node = root->children[i];
+        if (node->type == AST_FUNCTION && strcmp(node->text, "main") == 0) {
+            found_main = 1;
+            break;
+        }
     }
 
-    ASTNode* main_func = root->children[0];
-    if (strcmp(main_func->text, "main") != 0) {
-        printf("Main function name mismatch\n");
+    if (!found_main) {
+        printf("Missing main function\n");
         return 1;
     }
 
