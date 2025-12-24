@@ -655,10 +655,21 @@ static void generate_expression(FILE* f, ASTNode* node) {
                     generate_expression(f, child);
                 }
                 
-                if (i < node->child_count - 1) fprintf(f, ", ");
+        if (i < node->child_count - 1) fprintf(f, ", ");
             }
         }
         fprintf(f, " }");
+    } else if (node->type == AST_CAST) {
+        fprintf(f, "(%s) ", node->children[0]->text);
+        generate_expression(f, node->children[1]);
+    } else if (node->type == AST_TERNARY) {
+        fprintf(f, "(");
+        generate_expression(f, node->children[0]);
+        fprintf(f, " ? ");
+        generate_expression(f, node->children[1]);
+        fprintf(f, " : ");
+        generate_expression(f, node->children[2]);
+        fprintf(f, ")");
     } else if (node->type == AST_UNARY_OP) {
         fprintf(f, "%s", node->text); 
         generate_expression(f, node->children[0]);

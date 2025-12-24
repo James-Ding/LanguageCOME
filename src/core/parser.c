@@ -106,14 +106,15 @@ static ASTNode* parse_primary() {
     // Unary ops like !, ~, * are handled here?
     // Snippet 159 showed NOT, TILDE, STAR handling at TOP of parse_primary!
     // I must preserve that.
-    if (t->type == TOKEN_NOT || t->type == TOKEN_TILDE || t->type == TOKEN_STAR) {
+    if (t->type == TOKEN_NOT || t->type == TOKEN_TILDE || t->type == TOKEN_STAR || t->type == TOKEN_MINUS) {
         TokenType op_type = t->type; 
         advance();
-        ASTNode* operand = parse_primary(); // Recursive for **x
+        ASTNode* operand = parse_primary(); // Recursive for **x or - -x
         ASTNode* unary = ast_new(AST_UNARY_OP);
         if (op_type == TOKEN_NOT) strcpy(unary->text, "!");
         else if (op_type == TOKEN_TILDE) strcpy(unary->text, "~");
         else if (op_type == TOKEN_STAR) strcpy(unary->text, "*");
+        else if (op_type == TOKEN_MINUS) strcpy(unary->text, "-");
         unary->children[unary->child_count++] = operand;
         // Unary ops usually bind tight, but postfix binds tighter.
         // If I return here, I miss postfix on the result?
@@ -194,8 +195,29 @@ static ASTNode* parse_primary() {
         }
         expect(TOKEN_RBRACE);
     } else if (match(TOKEN_LPAREN)) {
-        node = parse_expression();
-        expect(TOKEN_RPAREN);
+        if (is_type_token(current()->type)) {
+             // Cast: (int) expr
+             char type_name[64];
+             strcpy(type_name, current()->text);
+             advance();
+             // Check array
+             while(match(TOKEN_LBRACKET)) {
+                 while(current()->type!=TOKEN_RBRACKET && current()->type!=TOKEN_EOF) advance();
+                 expect(TOKEN_RBRACKET);
+                 strcat(type_name, "[]");
+             }
+             expect(TOKEN_RPAREN);
+             
+             ASTNode* target = parse_primary(); // Cast binds tight
+             node = ast_new(AST_CAST);
+             ASTNode* tnode = ast_new(AST_IDENTIFIER);
+             strcpy(tnode->text, type_name);
+             node->children[node->child_count++] = tnode;
+             node->children[node->child_count++] = target;
+        } else {
+             node = parse_expression();
+             expect(TOKEN_RPAREN);
+        }
     }
 
     if (!node) return NULL;
@@ -290,12 +312,13 @@ static ASTNode* parse_primary() {
 
 static int get_precedence(TokenType type) {
     switch (type) {
-        case TOKEN_LOGIC_OR: return 1;
-        case TOKEN_LOGIC_AND: return 2;
-        case TOKEN_EQ: case TOKEN_NEQ: return 3;
-        case TOKEN_LT: case TOKEN_GT: case TOKEN_LE: case TOKEN_GE: return 4;
-        case TOKEN_PLUS: case TOKEN_MINUS: return 5;
-        case TOKEN_STAR: case TOKEN_SLASH: case TOKEN_PERCENT: return 6;
+        case TOKEN_QUESTION: return 1;
+        case TOKEN_LOGIC_OR: return 2;
+        case TOKEN_LOGIC_AND: return 3;
+        case TOKEN_EQ: case TOKEN_NEQ: return 4;
+        case TOKEN_LT: case TOKEN_GT: case TOKEN_LE: case TOKEN_GE: return 5;
+        case TOKEN_PLUS: case TOKEN_MINUS: return 6;
+        case TOKEN_STAR: case TOKEN_SLASH: case TOKEN_PERCENT: return 7;
         default: return 0;
     }
 }
@@ -308,18 +331,32 @@ static ASTNode* parse_expression_prec(int min_prec) {
         Token* t = current();
         int prec = get_precedence(t->type);
         if (prec == 0 || prec < min_prec) break;
-
-        char op_text[32];
-        strcpy(op_text, t->text);
-        advance(); // consume op
-
-        ASTNode* rhs = parse_expression_prec(prec + 1);
         
-        ASTNode* bin = ast_new(AST_BINARY_OP);
-        strcpy(bin->text, op_text);
-        bin->children[bin->child_count++] = lhs;
-        bin->children[bin->child_count++] = rhs;
-        lhs = bin;
+        if (t->type == TOKEN_QUESTION) {
+            // Ternary: a ? b : c
+            advance(); // consume ?
+            ASTNode* true_expr = parse_expression();
+            expect(TOKEN_COLON);
+            ASTNode* false_expr = parse_expression_prec(prec); // Right associative
+            
+            ASTNode* ternary = ast_new(AST_TERNARY);
+            ternary->children[ternary->child_count++] = lhs;
+            ternary->children[ternary->child_count++] = true_expr;
+            ternary->children[ternary->child_count++] = false_expr;
+            lhs = ternary;
+        } else {
+            char op_text[32];
+            strcpy(op_text, t->text);
+            advance(); // consume op
+
+            ASTNode* rhs = parse_expression_prec(prec + 1);
+            
+            ASTNode* bin = ast_new(AST_BINARY_OP);
+            strcpy(bin->text, op_text);
+            bin->children[bin->child_count++] = lhs;
+            bin->children[bin->child_count++] = rhs;
+            lhs = bin;
+        }
     }
     return lhs;
 }

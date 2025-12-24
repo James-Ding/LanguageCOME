@@ -120,6 +120,7 @@ int lex_file(const char* filename, TokenList* out) {
             else if(*p==':'){ tok.type=TOKEN_COLON; strcpy(tok.text,":"); p++; }
             else if(*p==';'){ tok.type=TOKEN_SEMICOLON; strcpy(tok.text,";"); p++; }
             else if(*p==','){ tok.type=TOKEN_COMMA; strcpy(tok.text,","); p++; }
+            else if(*p=='?'){ tok.type=TOKEN_QUESTION; strcpy(tok.text,"?"); p++; }
             else if(*p=='~'){ tok.type=TOKEN_TILDE; strcpy(tok.text,"~"); p++; }
             
             // Multi-char Operators
