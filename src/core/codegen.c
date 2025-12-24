@@ -1507,19 +1507,13 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
 
         // Scan AST to find main function and check if it has parameters
         int main_has_params = 0;
-        fprintf(stderr, "DEBUG: Scanning AST for main function (child_count=%d)\n", ast->child_count);
         for (int i = 0; i < ast->child_count; i++) {
             ASTNode* child = ast->children[i];
-            if (child) {
-                fprintf(stderr, "DEBUG: Child %d: type=%d, text='%s'\n", i, child->type, child->text);
-            }
             if (child && child->type == AST_FUNCTION && strcmp(child->text, "main") == 0) {
-                fprintf(stderr, "DEBUG: Found main function! child_count=%d\n", child->child_count);
                 // Check if main has any arguments
                 // Arguments are in children[1] if present
                 if (child->child_count > 1 && child->children[1]) {
                     ASTNode* args_node = child->children[1];
-                    fprintf(stderr, "DEBUG: Args node child_count=%d\n", args_node->child_count);
                     if (args_node->child_count > 0) {
                         main_has_params = 1;
                     }
@@ -1527,7 +1521,6 @@ int generate_c_from_ast(ASTNode* ast, const char* out_file, const char* source_f
                 break;
             }
         }
-        fprintf(stderr, "DEBUG: main_has_params=%d\n", main_has_params);
 
         // Forward declare user main with correct signature
         if (main_has_params) {

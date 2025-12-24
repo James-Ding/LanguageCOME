@@ -14,7 +14,7 @@ Key design goals:
 # 2. Source File Structure
 
 Each source file must declare exactly one module.
-
+main is the program entry module.
 ```come
 module main
 ```
@@ -32,14 +32,8 @@ Come supports both single-line and multi-line comments.
 ```
 
 # 3. Modules and Imports
-Every source file declares exactly one module:
 
-module name
-
-
-main is the program entry module.
-
-Imports expose exported symbols under a module namespace.
+Imports expose symbols under a module namespace.
 
 as forces system-module import.
 
@@ -47,17 +41,17 @@ Local modules cannot use as.
 
 Module Resolution
 
-Import X is resolved in order:
+import X is resolved in order:
 
 ./X.co
-
+./X/*.co
 ./modules/X/*.co
 
 System module depot
 
-Found in (1–2): local module
+Found in (1–3): local module
 
-Found in (3): system module
+Found in (4): system module
 
 Local vs System Modules
 
@@ -295,14 +289,13 @@ Structs may declare methods:
 struct TCP_ADDR {
     tcpport_t portnumber
     byte ipaddr[16]
-    method nport()
 }
 ```
 
 Method implementation:
 
 ```come
-byte nport() {
+byte TCP_ADDR.nport() {
     return net.hton(self.portnumber)
 }
 ```
@@ -341,6 +334,8 @@ Functions may return tuples:
 Call site:
 
 ```come
+int sum
+string cmp
 (sum, cmp) = add_n_compare(i, s)
 ```
 

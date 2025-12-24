@@ -62,5 +62,10 @@ export (
     void Proc.exit(int status),
     void Proc.atexit(void* cb),
     string Proc.getenv(string name),
-    int Proc.system(string cmd)
+    int Proc.system(string cmd),
+
+    // ERR Methods
+    string ERR.str(),
+    int ERR.no(),
+    void ERR.clear(),
 )
